@@ -247,5 +247,5 @@ The repository has been built from scratch with a complete implementation of:
 
 ---
 
-**Last Updated**: 2026-01-20 (Discovery priority reversed: UI primary, Gamma fallback)
+**Last Updated**: 2026-01-20 (Added official market anchoring via Gamma token IDs and strict price validation)
 **Status**: Building initial implementation
