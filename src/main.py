@@ -146,10 +146,11 @@ class PolymrketBot:
             self._cleanup()
     
     def _discover_market(self) -> bool:
-        """Discover active market slug using two-level discovery.
+        """Discover active 15m crypto market using two-level discovery.
         
-        LEVEL 1: Gamma API (fast, but may miss fresh events)
-        LEVEL 2: UI scraping (slower, but more reliable for fresh 15m events)
+        First attempts Gamma API (fast). If that fails, falls back to UI scraping
+        from polymarket.com/crypto/15m (slower but more reliable for fresh events).
+        Browser is started automatically if UI fallback is needed.
         
         Returns:
             True if market found, False otherwise
@@ -158,15 +159,11 @@ class PolymrketBot:
         
         slug_prefix = self.asset_config['slug_prefix']
         
-        # Use new two-level discovery
-        # Note: We pass page=None initially because browser isn't started yet
-        # If Gamma API fails, we'll start browser and retry with UI fallback
-        
         # Try Gamma API first (without browser)
         market_info = self.gamma.discover_15m_market(
             asset=self.asset,
             slug_prefix=slug_prefix,
-            page=None,  # No browser yet
+            page=None,
             base_url=self.config.get('api', 'polymarket_base_url')
         )
         
@@ -178,7 +175,7 @@ class PolymrketBot:
             market_info = self.gamma.discover_15m_market(
                 asset=self.asset,
                 slug_prefix=slug_prefix,
-                page=self.ui.page,  # Now we have a browser page
+                page=self.ui.page,
                 base_url=self.config.get('api', 'polymarket_base_url')
             )
         

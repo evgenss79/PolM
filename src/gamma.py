@@ -7,6 +7,8 @@ Two-level discovery for 15m crypto markets:
 """
 
 import requests
+import time
+import traceback
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 import re
@@ -146,8 +148,9 @@ class GammaAPI:
     def discover_15m_event_via_ui(
         self,
         asset: str,
-        page,  # Playwright Page object
-        base_url: str
+        page,  # Type: playwright.sync_api.Page (avoid import dependency)
+        base_url: str,
+        page_load_delay: int = 2
     ) -> Optional[Dict[str, Any]]:
         """FALLBACK discovery: Scrape event from polymarket.com/crypto/15m page.
         
@@ -155,8 +158,9 @@ class GammaAPI:
         
         Args:
             asset: Asset name ('BTC' or 'ETH')
-            page: Playwright Page object
+            page: Playwright Page object (playwright.sync_api.Page)
             base_url: Polymarket base URL
+            page_load_delay: Seconds to wait after page load (default: 2)
         
         Returns:
             Dictionary with event info or None if failed
@@ -169,9 +173,8 @@ class GammaAPI:
             print(f"   📍 Navigating to: {crypto_15m_url}")
             page.goto(crypto_15m_url, wait_until='networkidle', timeout=30000)
             
-            # Wait for page to fully load
-            import time
-            time.sleep(2)
+            # Wait for page to fully load (allow dynamic content to render)
+            time.sleep(page_load_delay)
             
             # Look for the asset card (Bitcoin or Ethereum)
             asset_names = {
@@ -190,10 +193,13 @@ class GammaAPI:
                 try:
                     # Strategy 1: Find card containing the asset name and get its link
                     # Look for links with /event/ in href
-                    links = page.locator('a[href*="/event/"]').all()
+                    # Use count() and nth() for better memory efficiency
+                    links_locator = page.locator('a[href*="/event/"]')
+                    link_count = links_locator.count()
                     
-                    for link in links:
+                    for i in range(link_count):
                         try:
+                            link = links_locator.nth(i)
                             # Get the href
                             href = link.get_attribute('href')
                             if not href:
@@ -253,7 +259,6 @@ class GammaAPI:
             
         except Exception as e:
             print(f"❌ FALLBACK DISCOVERY ERROR: {e}")
-            import traceback
             traceback.print_exc()
             return None
     
