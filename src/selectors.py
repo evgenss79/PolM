@@ -7,6 +7,12 @@ from typing import Optional, Tuple
 import re
 
 
+# Price validation constants
+MIN_REALISTIC_PRICE = 10  # Minimum price to not be considered contract price/odds
+MIN_BTC_PRICE = 10000  # BTC price must be > this to be valid
+MIN_ETH_PRICE = 500    # ETH price must be > this to be valid
+
+
 class Selectors:
     """Robust element selectors for Polymarket pages."""
     
@@ -65,8 +71,8 @@ class Selectors:
                             # Skip obviously wrong values:
                             # - Contract prices (0.xx range)
                             # - Cents (< 1.00)
-                            # - Small odds values (< 10)
-                            if price < 10:
+                            # - Small odds values (< MIN_REALISTIC_PRICE)
+                            if price < MIN_REALISTIC_PRICE:
                                 continue
                             
                             # This looks like a real price, use it
@@ -89,14 +95,14 @@ class Selectors:
             if asset:
                 asset_lower = asset.lower()
                 
-                if asset_lower == 'btc' and parsed_value <= 10000:
-                    print(f"❌ VALIDATION FAILED: BTC price to beat ({parsed_value:.2f}) is <= 10000")
+                if asset_lower == 'btc' and parsed_value <= MIN_BTC_PRICE:
+                    print(f"❌ VALIDATION FAILED: BTC price to beat ({parsed_value:.2f}) is <= {MIN_BTC_PRICE}")
                     print(f"   This looks like contract price/odds, not BTC price.")
                     print(f"   Context: {context_text[:200]}")
                     return None
                 
-                elif asset_lower == 'eth' and parsed_value <= 500:
-                    print(f"❌ VALIDATION FAILED: ETH price to beat ({parsed_value:.2f}) is <= 500")
+                elif asset_lower == 'eth' and parsed_value <= MIN_ETH_PRICE:
+                    print(f"❌ VALIDATION FAILED: ETH price to beat ({parsed_value:.2f}) is <= {MIN_ETH_PRICE}")
                     print(f"   This looks like contract price/odds, not ETH price.")
                     print(f"   Context: {context_text[:200]}")
                     return None

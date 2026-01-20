@@ -26,6 +26,11 @@ from .stake_manager import StakeManager
 from .ui_oneclick import OneClickUI
 
 
+# Price validation constants
+MIN_PRICE_RATIO = 0.5  # RTDS vs price_to_beat minimum ratio
+MAX_PRICE_RATIO = 2.0  # RTDS vs price_to_beat maximum ratio
+
+
 class PolymrketBot:
     """Main orchestrator for Polymarket One-Click Bot."""
     
@@ -311,9 +316,9 @@ class PolymrketBot:
         # Calculate order of magnitude difference
         price_ratio = current_price / price_to_beat if price_to_beat > 0 else 0
         
-        # They should be within reasonable range (e.g., 0.5x to 2x)
+        # They should be within reasonable range (MIN_PRICE_RATIO to MAX_PRICE_RATIO)
         # If price_to_beat is way off (e.g., 0.21 vs 43000), ratio will be tiny
-        if price_ratio < 0.5 or price_ratio > 2.0:
+        if price_ratio < MIN_PRICE_RATIO or price_ratio > MAX_PRICE_RATIO:
             print(f"❌ VALIDATION WARNING: RTDS price and price_to_beat are NOT same order of magnitude")
             print(f"   RTDS current price: ${current_price:.2f}")
             print(f"   Price to beat: ${price_to_beat:.2f}")
