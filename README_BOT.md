@@ -448,14 +448,15 @@ The bot will automatically use the UI fallback (`/crypto/15m`) which always show
 - Polymarket pages have live websockets (for real-time price updates, activity feeds, etc.)
 - The `networkidle` wait condition waits for all network activity to stop
 - With active websockets, network is never idle, so the page never finishes loading
-- This causes navigation to timeout after 30 seconds
+- This causes navigation to timeout
 
 **The Fix (Implemented):**
 - Navigation now uses `wait_until='domcontentloaded'` instead of `networkidle`
 - This waits only for the DOM to be ready, not for all network activity to stop
-- Timeout increased to 90 seconds for slower connections
-- Added 1.5 second stabilization wait after DOM loads
+- Default timeout is now 90 seconds (configurable via `timeout_ms` in config.json)
+- Added 2 second stabilization wait after DOM loads
 - Optionally waits for key page elements (Up/Down buttons) to ensure page is interactive
+- **NEW**: On timeout, browser is left open for manual intervention
 
 **What you'll see in logs:**
 ```
@@ -463,11 +464,28 @@ The bot will automatically use the UI fallback (`/crypto/15m`) which always show
 ✅ Page loaded (domcontentloaded)
 ```
 
+**If a timeout occurs:**
+The browser will stay open and you'll see:
+```
+======================================================================
+⚠️  PAGE LOAD TIMEOUT
+======================================================================
+Page load timeout. Browser left open for manual login.
+Press Enter to close browser and exit...
+======================================================================
+```
+
+This gives you a chance to:
+1. **Manually complete any login/captcha** if needed
+2. **Diagnose network issues** by checking if the page loads in the browser
+3. **Verify Polymarket is accessible** before trying again
+
 **If you still experience timeouts:**
 1. **Check your internet connection** - Slow connections may need more time
-2. **Try again** - Polymarket servers may be slow or experiencing issues
-3. **Verify Polymarket is accessible** - Visit `https://polymarket.com` in your browser
-4. **Check firewall settings** - Ensure your firewall allows connections to Polymarket
+2. **Increase timeout in config.json** - Change `"timeout_ms": 90000` to 120000 (2 minutes) or higher
+3. **Try again** - Polymarket servers may be slow or experiencing issues
+4. **Verify Polymarket is accessible** - Visit `https://polymarket.com` in your browser
+5. **Check firewall settings** - Ensure your firewall allows connections to Polymarket
 
 ### "Could not find UP/DOWN button"
 
@@ -619,9 +637,10 @@ Review these files to track performance and debug issues.
   "browser": {
     "headless": false,                // Show browser window
     "profile_dir": ".pw_profile",     // Browser profile location
-    "timeout_ms": 30000,              // Element wait timeout
+    "timeout_ms": 90000,              // Element wait timeout (90s)
     "retry_attempts": 3,              // Retry clicks N times
-    "slow_mo_ms": 500                 // Slow down actions (ms)
+    "slow_mo_ms": 500,                // Slow down actions (ms)
+    "channel": "chrome"               // Use system Chrome (vs bundled Chromium)
   }
 }
 ```

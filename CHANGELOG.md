@@ -6,6 +6,32 @@ Format: [YYYY-MM-DD] - Description of changes
 
 ---
 
+## [2026-01-20] - URGENT FIX: Navigation timeout and browser handling improvements
+
+### Fixed
+- **Page navigation timeout configuration**:
+  - **Issue**: `navigate_to_market()` was using hardcoded 90000ms timeout instead of configurable value, and browser closed automatically on timeout
+  - **Solution**: 
+    - Changed `navigate_to_market()` to use `self.timeout` (configurable from config.json)
+    - Increased default `timeout_ms` in config from 30000 to 90000 for better reliability
+    - Changed stabilization wait from 1500ms to 2000ms as requested
+  - **Timeout Error Handling**: On TimeoutError, browser is now left open for manual intervention
+    - Displays message: "Page load timeout. Browser left open for manual login. Press Enter to close."
+    - Waits for Enter keypress before closing
+    - Allows user to manually complete login or diagnose issues
+  - **Files changed**:
+    - `src/ui_oneclick.py`: Updated `navigate_to_market()` with timeout handling and configurable timeout
+    - `config.json.example`: Increased default timeout_ms from 30000 to 90000
+    - `CHANGELOG.md`: Documented this fix
+    - `README_BOT.md`: Updated timeout troubleshooting section
+
+### Changed
+- Default browser timeout increased from 30 seconds to 90 seconds
+- Page stabilization wait increased from 1.5 seconds to 2.0 seconds
+- Browser no longer closes automatically on timeout - requires manual confirmation
+
+---
+
 ## [2026-01-20] - FIX: Page.goto timeout due to networkidle never triggering
 
 ### Fixed

@@ -75,20 +75,36 @@ class OneClickUI:
         print(f"📍 Navigating to: {url}")
         # Use domcontentloaded instead of networkidle because Polymarket has live websockets
         # that prevent networkidle from ever triggering
-        self.page.goto(url, wait_until='domcontentloaded', timeout=90000)
-        
-        # Wait for page to stabilize
-        self.page.wait_for_timeout(1500)
-        
-        # Optionally wait for a stable selector to ensure page is ready
         try:
-            # Wait for outcome buttons (Up/Down) to be visible
-            self.page.wait_for_selector('button:has-text("Up"), button:has-text("DOWN")', timeout=30000)
-        except Exception:
-            # If selector not found, continue anyway (page may have different layout)
-            pass
-        
-        print("✅ Page loaded (domcontentloaded)")
+            self.page.goto(url, wait_until='domcontentloaded', timeout=self.timeout)
+            
+            # Wait for page to stabilize
+            self.page.wait_for_timeout(2000)
+            
+            # Optionally wait for a stable selector to ensure page is ready
+            try:
+                # Wait for outcome buttons (Up/Down) to be visible
+                self.page.wait_for_selector('button:has-text("Up"), button:has-text("DOWN")', timeout=30000)
+            except Exception:
+                # If selector not found, continue anyway (page may have different layout)
+                pass
+            
+            print("✅ Page loaded (domcontentloaded)")
+        except Exception as e:
+            if "Timeout" in str(e) or "timeout" in str(e):
+                print("\n" + "="*70)
+                print("⚠️  PAGE LOAD TIMEOUT")
+                print("="*70)
+                print("Page load timeout. Browser left open for manual login.")
+                print("Press Enter to close browser and exit...")
+                print("="*70)
+                try:
+                    input()
+                except KeyboardInterrupt:
+                    pass
+                raise
+            else:
+                raise
     
     def parse_market_info(self) -> Tuple[Optional[float], Optional[int]]:
         """Parse price to beat and countdown from page.
