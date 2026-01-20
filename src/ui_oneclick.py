@@ -49,7 +49,7 @@ class OneClickUI:
             launch_args['channel'] = self.channel
             print(f"  Using browser channel: {self.channel}")
         else:
-            print(f"  Using bundled Chromium")
+            print("  Using bundled Chromium")
         
         # Launch browser with persistent context (saves login session)
         self.context = self.playwright.chromium.launch_persistent_context(**launch_args)
