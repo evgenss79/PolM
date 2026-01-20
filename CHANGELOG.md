@@ -6,6 +6,36 @@ Format: [YYYY-MM-DD] - Description of changes
 
 ---
 
+## [2026-01-20] - CRITICAL FIX: Discovery priority reversed to always get LIVE markets
+
+### Fixed
+- **Discovery now prioritizes UI scraping over Gamma API**:
+  - **Issue**: Gamma API was returning future markets (e.g., "January 21...") instead of current LIVE "сейчас" (now) markets
+  - **Root Cause**: Gamma API indexing issues or time filtering failures
+  - **Solution**: Reversed discovery priority to make UI scraping PRIMARY and Gamma API FALLBACK
+  - **LEVEL 1 (Primary)**: UI scraping from `polymarket.com/crypto/15m`
+    - Opens crypto/15m page in Playwright browser
+    - Finds Bitcoin/Ethereum "Up or Down – 15 minute" card
+    - Extracts href to current LIVE event
+    - Always returns current round, never future
+  - **LEVEL 2 (Fallback)**: Gamma API with time filtering
+    - Used only when browser unavailable or UI fails
+    - Filters by slug prefix and time window
+  - **Files changed**:
+    - `src/gamma.py`: Reversed discovery order, updated logging (PRIMARY/FALLBACK labels)
+    - `src/main.py`: Always start browser for UI primary discovery
+    - `PROJECT_STATE.md`: Updated discovery section with new priority
+    - `CHANGELOG.md`: Documented this fix
+    - `README_BOT.md`: Updated troubleshooting section
+
+### Changed
+- Browser now starts immediately for discovery (not conditionally)
+- Discovery logging shows "PRIMARY DISCOVERY" (UI) and "FALLBACK DISCOVERY" (Gamma)
+- Source tag in results: `UI_PRIMARY` or `GAMMA_FALLBACK`
+- Discovery is more reliable for getting current LIVE markets
+
+---
+
 ## [2026-01-20] - URGENT FIX: Navigation timeout and browser handling improvements
 
 ### Fixed

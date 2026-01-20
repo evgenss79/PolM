@@ -2,8 +2,8 @@
 Gamma API client for discovering active Polymarket markets.
 
 Two-level discovery for 15m crypto markets:
-1. Primary: Gamma API with proper ordering and filtering
-2. Fallback: UI scraping from polymarket.com/crypto/15m
+1. Primary: UI scraping from polymarket.com/crypto/15m (always gets current LIVE market)
+2. Fallback: Gamma API with proper ordering and filtering (when UI unavailable)
 """
 
 import requests
@@ -21,7 +21,7 @@ class GammaAPI:
         self.api_url = api_url
     
     def find_active_market(self, slug_prefix: str) -> Optional[Dict[str, Any]]:
-        """Find the most recent active market matching slug prefix (PRIMARY discovery).
+        """Find the most recent active market matching slug prefix (FALLBACK discovery).
         
         Uses enhanced Gamma API query with proper ordering to find fresh 15m events.
         Filters out future markets by checking startDate/endDate to only select live markets.
@@ -33,7 +33,7 @@ class GammaAPI:
             Market data dictionary or None if not found
         """
         try:
-            print(f"🔍 PRIMARY DISCOVERY: Searching Gamma API for prefix: {slug_prefix}")
+            print(f"🔍 FALLBACK DISCOVERY: Searching Gamma API for prefix: {slug_prefix}")
             
             # Query Gamma API with enhanced parameters for 15m discovery
             response = requests.get(
@@ -60,7 +60,7 @@ class GammaAPI:
             print(f"   📊 Found {len(matching)} markets matching prefix '{slug_prefix}'")
             
             if not matching:
-                print(f"❌ PRIMARY DISCOVERY FAILED: No active markets found for prefix: {slug_prefix}")
+                print(f"❌ FALLBACK DISCOVERY FAILED: No active markets found for prefix: {slug_prefix}")
                 return None
             
             # Filter by time: only keep markets that are LIVE NOW (start <= now < end)
@@ -75,11 +75,10 @@ class GammaAPI:
             print(f"   📊 After LIVE NOW filter: {len(live_markets)} markets (filtered out {len(matching) - len(live_markets)} future/past markets)")
             
             if not live_markets:
-                print(f"❌ PRIMARY DISCOVERY FAILED: No LIVE markets found (all {len(matching)} candidates are future or past markets)")
+                print(f"❌ FALLBACK DISCOVERY FAILED: No LIVE markets found (all {len(matching)} candidates are future or past markets)")
                 print(f"   This typically means:")
                 print(f"   - Future markets scheduled but not started yet")
                 print(f"   - API indexing delay for new rounds")
-                print(f"   Falling back to UI scraping...")
                 return None
             
             # Sort by most recent (newest first) - double-check ordering
@@ -99,7 +98,7 @@ class GammaAPI:
             start_time_str = self._format_market_time(market, 'start')
             end_time_str = self._format_market_time(market, 'end')
             
-            print(f"✅ PRIMARY DISCOVERY SUCCESS!")
+            print(f"✅ FALLBACK DISCOVERY SUCCESS!")
             print(f"   Selected: LIVE market (start <= now < end)")
             print(f"   Slug: {slug}")
             print(f"   Question: {question}")
@@ -115,10 +114,10 @@ class GammaAPI:
             return market
             
         except requests.RequestException as e:
-            print(f"❌ PRIMARY DISCOVERY ERROR: Failed to fetch from Gamma API: {e}")
+            print(f"❌ FALLBACK DISCOVERY ERROR: Failed to fetch from Gamma API: {e}")
             return None
         except Exception as e:
-            print(f"❌ PRIMARY DISCOVERY ERROR: Unexpected error: {e}")
+            print(f"❌ FALLBACK DISCOVERY ERROR: Unexpected error: {e}")
             return None
     
     def get_market_url(self, slug: str, base_url: str) -> str:
@@ -285,9 +284,9 @@ class GammaAPI:
         base_url: str,
         page_load_delay: int = 2
     ) -> Optional[Dict[str, Any]]:
-        """FALLBACK discovery: Scrape event from polymarket.com/crypto/15m page.
+        """PRIMARY discovery: Scrape event from polymarket.com/crypto/15m page.
         
-        This is used when Gamma API fails to return fresh 15m events.
+        This always returns the current LIVE market, avoiding future market issues.
         
         Args:
             asset: Asset name ('BTC' or 'ETH')
@@ -299,7 +298,7 @@ class GammaAPI:
             Dictionary with event info or None if failed
         """
         try:
-            print(f"\n🔄 FALLBACK DISCOVERY: Scraping UI for {asset} 15m event...")
+            print(f"\n🔍 PRIMARY DISCOVERY: Scraping UI for {asset} 15m event...")
             
             # Navigate to the 15m crypto aggregator page
             crypto_15m_url = f"{base_url}/crypto/15m"
@@ -360,7 +359,7 @@ class GammaAPI:
                     continue
             
             if not event_href:
-                print(f"❌ FALLBACK DISCOVERY FAILED: Could not find {asset} event on {crypto_15m_url}")
+                print(f"❌ PRIMARY DISCOVERY FAILED: Could not find {asset} event on {crypto_15m_url}")
                 return None
             
             # Parse the event info
@@ -382,10 +381,10 @@ class GammaAPI:
                 'url': full_url,
                 'asset': asset.upper(),
                 'timestamp': timestamp_info,
-                'source': 'UI_FALLBACK'
+                'source': 'UI_PRIMARY'
             }
             
-            print(f"✅ FALLBACK DISCOVERY SUCCESS!")
+            print(f"✅ PRIMARY DISCOVERY SUCCESS!")
             print(f"   Slug: {slug}")
             print(f"   URL: {full_url}")
             print(f"   Asset: {asset.upper()}")
@@ -395,7 +394,7 @@ class GammaAPI:
             return result
             
         except Exception as e:
-            print(f"❌ FALLBACK DISCOVERY ERROR: {e}")
+            print(f"❌ PRIMARY DISCOVERY ERROR: {e}")
             traceback.print_exc()
             return None
     
@@ -403,18 +402,18 @@ class GammaAPI:
         self,
         asset: str,
         slug_prefix: str,
-        page=None,  # Optional Playwright Page for fallback
+        page=None,  # Optional Playwright Page for UI scraping
         base_url: str = "https://polymarket.com"
     ) -> Optional[Dict[str, Any]]:
         """Two-level discovery for 15m crypto markets.
         
-        LEVEL 1 (Primary): Try Gamma API with enhanced filtering
-        LEVEL 2 (Fallback): Scrape UI from polymarket.com/crypto/15m
+        LEVEL 1 (Primary): Try UI scraping from polymarket.com/crypto/15m (always gets LIVE market)
+        LEVEL 2 (Fallback): Try Gamma API with enhanced filtering (when UI unavailable)
         
         Args:
             asset: Asset name ('BTC' or 'ETH')
             slug_prefix: Market slug prefix (e.g., "btc-updown-15m-")
-            page: Optional Playwright Page object for UI fallback
+            page: Optional Playwright Page object for UI scraping
             base_url: Polymarket base URL
         
         Returns:
@@ -424,9 +423,31 @@ class GammaAPI:
         print(f"🔍 TWO-LEVEL DISCOVERY FOR {asset.upper()} 15m MARKET")
         print("="*70)
         
-        # LEVEL 1: Try Gamma API (Primary)
-        print("\n📊 LEVEL 1: Gamma API Discovery")
+        # LEVEL 1: Try UI scraping first (Primary)
+        print("\n🌐 LEVEL 1: UI Discovery (Primary)")
         print("-" * 70)
+        
+        if page:
+            event_info = self.discover_15m_event_via_ui(asset, page, base_url)
+            
+            if event_info:
+                print("\n✅ Discovery complete via UI (Primary)")
+                print("="*70 + "\n")
+                return event_info
+        else:
+            print("⚠️  No browser page provided for UI scraping")
+            print("   Skipping primary UI discovery...")
+        
+        # LEVEL 2: Fallback to Gamma API
+        print("\n🔄 LEVEL 2: Gamma API Discovery (Fallback)")
+        print("-" * 70)
+        print("⚠️  UI discovery did not succeed.")
+        print("   This can happen when:")
+        print("   - Browser not available")
+        print("   - Page layout changed")
+        print("   - Network issues loading polymarket.com")
+        print("\n   Attempting Gamma API fallback...")
+        
         market = self.find_active_market(slug_prefix)
         
         if market:
@@ -439,39 +460,15 @@ class GammaAPI:
                 'url': full_url,
                 'asset': asset.upper(),
                 'timestamp': self._extract_timestamp_from_slug(slug),
-                'source': 'GAMMA_API',
+                'source': 'GAMMA_FALLBACK',
                 'market_data': market
             }
             
-            print("\n✅ Discovery complete via Gamma API")
+            print("\n✅ Discovery complete via Gamma API (Fallback)")
             print("="*70 + "\n")
             return result
         
-        # LEVEL 2: Fallback to UI scraping
-        print("\n🔄 LEVEL 2: UI Fallback Discovery")
-        print("-" * 70)
-        print("⚠️  Gamma API did not return any matching events.")
-        print("   This can happen when:")
-        print("   - New 15m round just started (indexing delay)")
-        print("   - Gamma API is having issues")
-        print("   - Market slug format changed")
-        print("\n   Attempting UI scraping from polymarket.com/crypto/15m...")
-        
-        if not page:
-            print("❌ FALLBACK FAILED: No browser page provided for UI scraping")
-            print("   To use fallback discovery, browser must be started first.")
-            print("\n❌ DISCOVERY FAILED: Both Gamma API and UI fallback unavailable")
-            print("="*70 + "\n")
-            return None
-        
-        event_info = self.discover_15m_event_via_ui(asset, page, base_url)
-        
-        if event_info:
-            print("\n✅ Discovery complete via UI fallback")
-            print("="*70 + "\n")
-            return event_info
-        
         # Both methods failed
-        print("\n❌ DISCOVERY FAILED: Both Gamma API and UI fallback failed")
+        print("\n❌ DISCOVERY FAILED: Both UI and Gamma API failed")
         print("="*70 + "\n")
         return None
