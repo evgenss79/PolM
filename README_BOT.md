@@ -423,6 +423,27 @@ Check your internet connection and firewall settings. The bot needs to connect t
 
 Make sure you have enough disk space. Playwright downloads Chromium (~300MB) on first run.
 
+### "Chromium crashes on macOS 15 arm64" or "SEGV_ACCERR error"
+
+**macOS 15 (Sequoia) on Apple Silicon (arm64) has a known issue with Playwright's bundled Chromium (chromium-1097).**
+
+**Solution**: Use system Chrome instead of bundled Chromium:
+
+1. Install Google Chrome if not already installed: [Download Chrome](https://www.google.com/chrome/)
+2. Update your `config.json` to use the Chrome channel:
+   ```json
+   "browser": {
+     "channel": "chrome"
+   }
+   ```
+3. Run the bot again - it will use your installed Chrome instead of bundled Chromium
+
+**Note**: The example `config.json.example` already has `"channel": "chrome"` by default. If you created your config before this fix, add the `"channel": "chrome"` line to the `"browser"` section.
+
+If you still experience issues, try:
+- Updating Google Chrome to the latest version
+- Removing the `.pw_profile` directory and logging in again
+
 ### "Daily loss limit exceeded"
 
 The bot stops trading to protect you. This is intentional! Reset happens automatically at midnight UTC, or you can manually edit `state.json` (advanced users only).
