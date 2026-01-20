@@ -60,9 +60,9 @@
     "comment": "Playwright browser automation settings",
     "headless": false,
     "profile_dir": ".pw_profile",
-    "timeout_ms": 90000,
-    "retry_attempts": 3,
-    "slow_mo_ms": 500,
+    "timeout_ms": 120000,
+    "retry_attempts": 2,
+    "slow_mo_ms": 0,
     "channel": "chrome"
   },
 

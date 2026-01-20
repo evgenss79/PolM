@@ -79,12 +79,12 @@ class OneClickUI:
             self.page.goto(url, wait_until='domcontentloaded', timeout=self.timeout)
             
             # Wait for page to stabilize
-            self.page.wait_for_timeout(2000)
+            self.page.wait_for_timeout(1500)
             
-            # Optionally wait for a stable selector to ensure page is ready
+            # Wait for stable selector to ensure page is ready
             try:
-                # Wait for outcome buttons (Up/Down) to be visible
-                self.page.wait_for_selector('button:has-text("Up"), button:has-text("DOWN")', timeout=self.timeout)
+                # Wait for outcome buttons (Up/Down) to be visible - indicates market is loaded
+                self.page.wait_for_selector('button:has-text("Up"), button:has-text("DOWN")', timeout=30000)
             except Exception:
                 # If selector not found, continue anyway (page may have different layout)
                 pass
@@ -93,9 +93,9 @@ class OneClickUI:
         except Exception as e:
             if "Timeout" in str(e) or "timeout" in str(e):
                 print("\n" + "="*70)
-                print("⚠️  PAGE LOAD TIMEOUT")
+                print("⚠️  NAVIGATION TIMEOUT")
                 print("="*70)
-                print("Page load timeout. Browser left open for manual login.")
+                print("Navigation timeout. Browser left open for manual login.")
                 print("Press Enter to close browser and exit...")
                 print("="*70)
                 try:

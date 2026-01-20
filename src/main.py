@@ -88,10 +88,15 @@ class PolymrketBot:
             # Reset daily stats if needed
             self.state.reset_daily_if_needed()
             
-            # Find active market (starts browser for UI primary discovery)
+            # Find active market (may start browser if needed for UI fallback)
             if not self._discover_market():
                 print("❌ Could not find active market. Exiting.")
                 return
+            
+            # Start browser if not already started (e.g., if events API succeeded)
+            if not self.ui.browser and not self.ui.context:
+                print("\n🌐 Starting browser for trading...")
+                self.ui.start_browser()
             
             # Start price feed
             print(f"\n📡 Starting price feed for {self.asset_config['display_name']}...")
@@ -104,7 +109,7 @@ class PolymrketBot:
             if not self.candles.has_enough_data(20):
                 print("⚠️  Not enough price data collected. Continuing anyway...")
             
-            # Navigate to market (browser already started by discovery)
+            # Navigate to market (browser already started by discovery or above)
             self.ui.navigate_to_market(self.current_market_url)
             
             # Check login status
@@ -144,9 +149,8 @@ class PolymrketBot:
     def _discover_market(self) -> bool:
         """Discover active 15m crypto market using two-level discovery.
         
-        First attempts UI scraping (reliable for current LIVE market). If that fails,
-        falls back to Gamma API (may return future markets).
-        Browser is started for UI primary discovery.
+        First attempts official /events API (reliable LIVE NOW filtering). If that fails,
+        falls back to UI scraping (requires browser).
         
         Returns:
             True if market found, False otherwise
@@ -155,11 +159,29 @@ class PolymrketBot:
         
         slug_prefix = self.asset_config['slug_prefix']
         
-        # Start browser for UI primary discovery
-        print("\n🌐 Starting browser for UI discovery...")
+        # Try /events API first (Primary) - no browser needed
+        market_info = self.gamma.discover_15m_market(
+            asset=self.asset,
+            slug_prefix=slug_prefix,
+            page=None,  # No browser for events API
+            base_url=self.config.get('api', 'polymarket_base_url')
+        )
+        
+        # If events API succeeded, we're done
+        if market_info:
+            self.current_slug = market_info['slug']
+            self.current_market_url = market_info['url']
+            
+            print(f"✅ Market discovered!")
+            print(f"   URL: {self.current_market_url}")
+            print(f"   Source: {market_info.get('source', 'UNKNOWN')}")
+            return True
+        
+        # Events API failed - try UI fallback (requires browser)
+        print("\n🌐 Starting browser for UI fallback...")
         self.ui.start_browser()
         
-        # Try UI scraping first (primary), then Gamma API (fallback)
+        # Try discovery again with browser page
         market_info = self.gamma.discover_15m_market(
             asset=self.asset,
             slug_prefix=slug_prefix,
