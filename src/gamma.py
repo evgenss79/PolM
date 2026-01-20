@@ -304,7 +304,11 @@ class GammaAPI:
             # Navigate to the 15m crypto aggregator page
             crypto_15m_url = f"{base_url}/crypto/15m"
             print(f"   📍 Navigating to: {crypto_15m_url}")
-            page.goto(crypto_15m_url, wait_until='networkidle', timeout=30000)
+            # Use domcontentloaded instead of networkidle because Polymarket has live websockets
+            page.goto(crypto_15m_url, wait_until='domcontentloaded', timeout=90000)
+            
+            # Wait for page to stabilize
+            page.wait_for_timeout(1500)
             
             # Wait for page to fully load (allow dynamic content to render)
             time.sleep(page_load_delay)

@@ -440,6 +440,35 @@ The bot uses a **two-level discovery system**:
 
 The bot will automatically use the UI fallback (`/crypto/15m`) which always shows the current LIVE market.
 
+### "Page navigation timeout" or "Timeout waiting for networkidle"
+
+**This happens when navigating to Polymarket pages takes too long or never completes.**
+
+**The Issue:**
+- Polymarket pages have live websockets (for real-time price updates, activity feeds, etc.)
+- The `networkidle` wait condition waits for all network activity to stop
+- With active websockets, network is never idle, so the page never finishes loading
+- This causes navigation to timeout after 30 seconds
+
+**The Fix (Implemented):**
+- Navigation now uses `wait_until='domcontentloaded'` instead of `networkidle`
+- This waits only for the DOM to be ready, not for all network activity to stop
+- Timeout increased to 90 seconds for slower connections
+- Added 1.5 second stabilization wait after DOM loads
+- Optionally waits for key page elements (Up/Down buttons) to ensure page is interactive
+
+**What you'll see in logs:**
+```
+📍 Navigating to: https://polymarket.com/event/btc-updown-15m-jan20-1430
+✅ Page loaded (domcontentloaded)
+```
+
+**If you still experience timeouts:**
+1. **Check your internet connection** - Slow connections may need more time
+2. **Try again** - Polymarket servers may be slow or experiencing issues
+3. **Verify Polymarket is accessible** - Visit `https://polymarket.com` in your browser
+4. **Check firewall settings** - Ensure your firewall allows connections to Polymarket
+
 ### "Could not find UP/DOWN button"
 
 This means the page layout changed. Possible fixes:

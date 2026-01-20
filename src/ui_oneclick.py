@@ -73,9 +73,22 @@ class OneClickUI:
             url: Full market URL
         """
         print(f"📍 Navigating to: {url}")
-        self.page.goto(url, wait_until='networkidle', timeout=self.timeout)
-        time.sleep(2)  # Give page time to fully load
-        print("✅ Page loaded")
+        # Use domcontentloaded instead of networkidle because Polymarket has live websockets
+        # that prevent networkidle from ever triggering
+        self.page.goto(url, wait_until='domcontentloaded', timeout=90000)
+        
+        # Wait for page to stabilize
+        self.page.wait_for_timeout(1500)
+        
+        # Optionally wait for a stable selector to ensure page is ready
+        try:
+            # Wait for outcome buttons (Up/Down) to be visible
+            self.page.wait_for_selector('button:has-text("Up"), button:has-text("DOWN")', timeout=30000)
+        except Exception:
+            # If selector not found, continue anyway (page may have different layout)
+            pass
+        
+        print("✅ Page loaded (domcontentloaded)")
     
     def parse_market_info(self) -> Tuple[Optional[float], Optional[int]]:
         """Parse price to beat and countdown from page.

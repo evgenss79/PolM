@@ -6,6 +6,28 @@ Format: [YYYY-MM-DD] - Description of changes
 
 ---
 
+## [2026-01-20] - FIX: Page.goto timeout due to networkidle never triggering
+
+### Fixed
+- **Playwright navigation timeout on Polymarket pages**:
+  - **Issue**: `page.goto()` with `wait_until='networkidle'` times out because Polymarket has live websockets that prevent network idle state
+  - **Solution**: Changed to `wait_until='domcontentloaded'` which waits only for DOM to be ready
+  - **Timeout**: Increased from 30s to 90s for slower connections
+  - **Stability**: Added `page.wait_for_timeout(1500)` after navigation for page stabilization
+  - **Optional selector wait**: In `navigate_to_market()`, optionally waits for Up/Down buttons with 30s timeout
+  - **Files changed**:
+    - `src/ui_oneclick.py`: Updated `navigate_to_market()` method
+    - `src/gamma.py`: Updated `discover_15m_event_via_ui()` fallback discovery
+    - `CHANGELOG.md`: Documented this fix
+    - `README_BOT.md`: Updated troubleshooting section
+
+### Changed
+- Navigation now uses `domcontentloaded` instead of `networkidle` for reliable page loading
+- Logs now show "Page loaded (domcontentloaded)" instead of "Page loaded"
+- Timeout increased to 90 seconds for better reliability on slow connections
+
+---
+
 ## [2026-01-20] - FIX: Discovery filters out future markets, selects only LIVE markets
 
 ### Fixed
