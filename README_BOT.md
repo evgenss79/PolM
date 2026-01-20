@@ -364,6 +364,46 @@ sudo apt update
 sudo apt install python3 python3-pip
 ```
 
+### "Could not find active market" or "Discovery failed"
+
+**This happens when the bot cannot find a fresh 15-minute crypto market.**
+
+The bot uses a **two-level discovery system**:
+
+**LEVEL 1 (Gamma API - Primary)**:
+- Queries Polymarket's Gamma API for active markets
+- Searches for events matching `btc-updown-15m-*` or `eth-updown-15m-*`
+- Selects the most recent event
+
+**LEVEL 2 (UI Fallback)**:
+- If Gamma API fails, scrapes `https://polymarket.com/crypto/15m`
+- Finds the event link directly from the aggregator page
+- More reliable but slower
+
+**Why does Gamma API sometimes fail?**
+- New 15m rounds start every 15 minutes (e.g., 14:00, 14:15, 14:30...)
+- Gamma API may have a few seconds delay indexing the new event
+- During this window, old event is closed and new one isn't indexed yet
+
+**What to do:**
+1. **Wait 30-60 seconds** - The new market will be indexed
+2. **Run the bot again** - It will automatically use UI fallback if Gamma fails
+3. **Check the logs** - Look for "PRIMARY DISCOVERY" and "FALLBACK DISCOVERY" messages
+4. **Verify network** - Make sure you can access:
+   - `https://gamma-api.polymarket.com/markets`
+   - `https://polymarket.com/crypto/15m`
+
+**Example output when fallback works:**
+```
+🔍 PRIMARY DISCOVERY: Searching Gamma API for prefix: btc-updown-15m-
+❌ PRIMARY DISCOVERY FAILED: No active markets found
+
+🔄 FALLBACK DISCOVERY: Scraping UI for BTC 15m event...
+   📍 Navigating to: https://polymarket.com/crypto/15m
+   ✅ Found BTC event link: /event/btc-updown-15m-jan20-1430
+✅ FALLBACK DISCOVERY SUCCESS!
+```
+
 ### "Could not find UP/DOWN button"
 
 This means the page layout changed. Possible fixes:

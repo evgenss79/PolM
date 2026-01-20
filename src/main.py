@@ -88,7 +88,7 @@ class PolymrketBot:
             # Reset daily stats if needed
             self.state.reset_daily_if_needed()
             
-            # Find active market
+            # Find active market (may start browser if Gamma API fails)
             if not self._discover_market():
                 print("❌ Could not find active market. Exiting.")
                 return
@@ -104,8 +104,9 @@ class PolymrketBot:
             if not self.candles.has_enough_data(20):
                 print("⚠️  Not enough price data collected. Continuing anyway...")
             
-            # Start browser
-            self.ui.start_browser()
+            # Start browser if not already started (from UI fallback)
+            if not self.ui.page:
+                self.ui.start_browser()
             
             # Navigate to market
             self.ui.navigate_to_market(self.current_market_url)
@@ -145,7 +146,10 @@ class PolymrketBot:
             self._cleanup()
     
     def _discover_market(self) -> bool:
-        """Discover active market slug.
+        """Discover active market slug using two-level discovery.
+        
+        LEVEL 1: Gamma API (fast, but may miss fresh events)
+        LEVEL 2: UI scraping (slower, but more reliable for fresh 15m events)
         
         Returns:
             True if market found, False otherwise
@@ -153,36 +157,67 @@ class PolymrketBot:
         print(f"\n🔍 Discovering active {self.asset_config['display_name']} market...")
         
         slug_prefix = self.asset_config['slug_prefix']
-        market = self.gamma.find_active_market(slug_prefix)
         
-        if not market:
-            return False
+        # Use new two-level discovery
+        # Note: We pass page=None initially because browser isn't started yet
+        # If Gamma API fails, we'll start browser and retry with UI fallback
         
-        self.current_slug = market['slug']
-        self.current_market_url = self.gamma.get_market_url(
-            self.current_slug,
-            self.config.get('api', 'polymarket_base_url')
+        # Try Gamma API first (without browser)
+        market_info = self.gamma.discover_15m_market(
+            asset=self.asset,
+            slug_prefix=slug_prefix,
+            page=None,  # No browser yet
+            base_url=self.config.get('api', 'polymarket_base_url')
         )
         
-        print(f"✅ Market URL: {self.current_market_url}")
+        # If Gamma API failed, start browser and try UI fallback
+        if not market_info:
+            print("\n🌐 Starting browser for UI fallback discovery...")
+            self.ui.start_browser()
+            
+            market_info = self.gamma.discover_15m_market(
+                asset=self.asset,
+                slug_prefix=slug_prefix,
+                page=self.ui.page,  # Now we have a browser page
+                base_url=self.config.get('api', 'polymarket_base_url')
+            )
+        
+        if not market_info:
+            return False
+        
+        self.current_slug = market_info['slug']
+        self.current_market_url = market_info['url']
+        
+        print(f"✅ Market discovered!")
+        print(f"   URL: {self.current_market_url}")
+        print(f"   Source: {market_info.get('source', 'UNKNOWN')}")
         
         return True
     
     def _check_for_new_market(self):
-        """Check for new market in watch mode."""
+        """Check for new market in watch mode using two-level discovery."""
         if not self.watch_mode:
             return
         
         slug_prefix = self.asset_config['slug_prefix']
-        new_market = self.gamma.watch_for_new_market(slug_prefix, self.current_slug)
         
-        if new_market:
-            print(f"\n🆕 New market detected! Updating...")
-            self.current_slug = new_market['slug']
-            self.current_market_url = self.gamma.get_market_url(
-                self.current_slug,
-                self.config.get('api', 'polymarket_base_url')
-            )
+        # Use enhanced discovery - try Gamma API first
+        market_info = self.gamma.discover_15m_market(
+            asset=self.asset,
+            slug_prefix=slug_prefix,
+            page=self.ui.page,  # Browser is already running in watch mode
+            base_url=self.config.get('api', 'polymarket_base_url')
+        )
+        
+        # Check if it's a different market than current
+        if market_info and market_info['slug'] != self.current_slug:
+            print(f"\n🆕 New market detected!")
+            print(f"   Old: {self.current_slug}")
+            print(f"   New: {market_info['slug']}")
+            print(f"   Source: {market_info.get('source', 'UNKNOWN')}")
+            
+            self.current_slug = market_info['slug']
+            self.current_market_url = market_info['url']
             
             # Navigate to new market
             self.ui.navigate_to_market(self.current_market_url)
