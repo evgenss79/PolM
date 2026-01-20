@@ -6,6 +6,46 @@ Format: [YYYY-MM-DD] - Description of changes
 
 ---
 
+## [2026-01-20] - CRITICAL FIX: Two-Level Discovery for 15m Crypto Markets
+
+### Fixed
+- **Two-Level Discovery System for 15m Crypto Markets**: 
+  - **Issue**: 15-minute crypto markets (btc-updown-15m-*, eth-updown-15m-*) create NEW events every 15 minutes. Gamma API may not immediately index fresh events, causing discovery failures.
+  - **Solution**: Implemented robust two-level discovery:
+    - **LEVEL 1 (Primary)**: Enhanced Gamma API query with `order=id&ascending=false&limit=100` to find freshest events
+    - **LEVEL 2 (Fallback)**: UI scraping from `polymarket.com/crypto/15m` when Gamma API fails
+  - **Benefits**: Bot now reliably finds active 15m markets even during API indexing delays
+  
+- **Enhanced Gamma API Discovery** (`src/gamma.py`):
+  - Added proper ordering parameters (`order=id`, `ascending=false`) to get newest events first
+  - Increased limit from implicit to explicit 100 for better coverage
+  - Added timestamp extraction from slugs for validation
+  - Improved logging with detailed step-by-step output
+  
+- **UI Fallback Discovery** (`src/gamma.py`):
+  - New method `discover_15m_event_via_ui()` scrapes event links from aggregator page
+  - Finds asset-specific event cards (Bitcoin/Ethereum)
+  - Extracts event URLs matching pattern `/event/{asset}-updown-15m-{timestamp}`
+  - Returns structured data: {url, slug, asset, timestamp, source}
+  
+- **Orchestration** (`src/gamma.py`):
+  - New method `discover_15m_market()` coordinates two-level discovery
+  - Clear console output showing which level succeeded
+  - Automatic fallback with user-friendly explanations
+  
+- **Main Loop Updates** (`src/main.py`):
+  - Updated `_discover_market()` to use new two-level system
+  - Browser now starts conditionally (only if Gamma API fails or for trading)
+  - Updated `_check_for_new_market()` for watch mode compatibility
+  - Fixed browser initialization order to support UI fallback
+
+### Changed
+- Discovery logic now never assumes "eternal events" - always searches dynamically
+- Logging is more verbose to help non-programmers understand discovery process
+- Discovery source is tracked and displayed (GAMMA_API vs UI_FALLBACK)
+
+---
+
 ## [2026-01-20]
 
 ### Added

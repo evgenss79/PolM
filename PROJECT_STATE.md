@@ -22,10 +22,37 @@ The repository has been built from scratch with a complete implementation of:
 ## Active Features
 
 ### Market Discovery
+
+**Two-Level Discovery System for 15m Crypto Markets**
+
 - **Module**: `src/gamma.py`
-- Queries Polymarket Gamma API to find active BTC/ETH 15m Up/Down markets
-- Handles slug rotation (markets change every 15 minutes)
-- Optional "watch mode" to auto-detect new markets
+- **Challenge**: 15-minute crypto markets create new events every 15 minutes with rotating slugs (e.g., `btc-updown-15m-jan20-1430`). Gamma API may not immediately index fresh events due to timing/caching.
+  
+**LEVEL 1 - Gamma API (Primary)**:
+- Endpoint: `https://gamma-api.polymarket.com/markets`
+- Parameters:
+  - `closed=false` - Only active markets
+  - `order=id` - Order by market ID (higher IDs = newer)
+  - `ascending=false` - Descending order (newest first)
+  - `limit=100` - Increased coverage for better discovery
+- Filters results by slug prefix (`btc-updown-15m-` or `eth-updown-15m-`)
+- Selects the most recent matching event
+- Extracts timestamp from slug for validation
+
+**LEVEL 2 - UI Scraping (Fallback)**:
+- Triggers when Gamma API returns no matching events
+- Opens `https://polymarket.com/crypto/15m` (aggregator page)
+- Finds asset-specific event card (Bitcoin or Ethereum)
+- Extracts `href` from event link (format: `/event/btc-updown-15m-XXXXXXXX`)
+- Returns structured event data
+
+**Orchestration** (`discover_15m_market()` method):
+1. Try LEVEL 1 (Gamma API) first
+2. If fails, fall back to LEVEL 2 (UI scraping)
+3. Return: `{url, slug, asset, timestamp, source}`
+4. Clear logging at each step for troubleshooting
+
+**Watch Mode**: Uses same two-level discovery to detect new markets every 30 seconds
 
 ### Real-Time Price Feed
 - **Module**: `src/rtds.py`
