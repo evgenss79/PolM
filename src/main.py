@@ -88,7 +88,7 @@ class PolymrketBot:
             # Reset daily stats if needed
             self.state.reset_daily_if_needed()
             
-            # Find active market (may start browser if Gamma API fails)
+            # Find active market (starts browser for UI primary discovery)
             if not self._discover_market():
                 print("❌ Could not find active market. Exiting.")
                 return
@@ -104,11 +104,7 @@ class PolymrketBot:
             if not self.candles.has_enough_data(20):
                 print("⚠️  Not enough price data collected. Continuing anyway...")
             
-            # Start browser if not already started (from UI fallback)
-            if not self.ui.page:
-                self.ui.start_browser()
-            
-            # Navigate to market
+            # Navigate to market (browser already started by discovery)
             self.ui.navigate_to_market(self.current_market_url)
             
             # Check login status
@@ -148,9 +144,9 @@ class PolymrketBot:
     def _discover_market(self) -> bool:
         """Discover active 15m crypto market using two-level discovery.
         
-        First attempts Gamma API (fast). If that fails, falls back to UI scraping
-        from polymarket.com/crypto/15m (slower but more reliable for fresh events).
-        Browser is started automatically if UI fallback is needed.
+        First attempts UI scraping (reliable for current LIVE market). If that fails,
+        falls back to Gamma API (may return future markets).
+        Browser is started for UI primary discovery.
         
         Returns:
             True if market found, False otherwise
@@ -159,25 +155,17 @@ class PolymrketBot:
         
         slug_prefix = self.asset_config['slug_prefix']
         
-        # Try Gamma API first (without browser)
+        # Start browser for UI primary discovery
+        print("\n🌐 Starting browser for UI discovery...")
+        self.ui.start_browser()
+        
+        # Try UI scraping first (primary), then Gamma API (fallback)
         market_info = self.gamma.discover_15m_market(
             asset=self.asset,
             slug_prefix=slug_prefix,
-            page=None,
+            page=self.ui.page,
             base_url=self.config.get('api', 'polymarket_base_url')
         )
-        
-        # If Gamma API failed, start browser and try UI fallback
-        if not market_info:
-            print("\n🌐 Starting browser for UI fallback discovery...")
-            self.ui.start_browser()
-            
-            market_info = self.gamma.discover_15m_market(
-                asset=self.asset,
-                slug_prefix=slug_prefix,
-                page=self.ui.page,
-                base_url=self.config.get('api', 'polymarket_base_url')
-            )
         
         if not market_info:
             return False

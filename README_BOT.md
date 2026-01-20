@@ -370,75 +370,64 @@ sudo apt install python3 python3-pip
 
 The bot uses a **two-level discovery system**:
 
-**LEVEL 1 (Gamma API - Primary)**:
+**LEVEL 1 (UI Scraping - Primary)**:
+- Opens `https://polymarket.com/crypto/15m` in browser
+- Finds the Bitcoin or Ethereum "Up or Down – 15 minute" card
+- Extracts the event link directly from the current LIVE market
+- **Always returns the current round**, never future markets
+- Most reliable method
+
+**LEVEL 2 (Gamma API - Fallback)**:
+- Used only if browser is unavailable or UI scraping fails
 - Queries Polymarket's Gamma API for active markets
 - Searches for events matching `btc-updown-15m-*` or `eth-updown-15m-*`
-- Selects the most recent event
+- Filters by time to get LIVE markets only
+- May have indexing delays or return future markets
 
-**LEVEL 2 (UI Fallback)**:
-- If Gamma API fails, scrapes `https://polymarket.com/crypto/15m`
-- Finds the event link directly from the aggregator page
-- More reliable but slower
+**Why UI scraping is now PRIMARY:**
+- Polymarket's UI always shows the current LIVE round
+- Eliminates issues with Gamma API returning future markets
+- More reliable for 15m markets that rotate every 15 minutes
 
-**Why does Gamma API sometimes fail?**
-- New 15m rounds start every 15 minutes (e.g., 14:00, 14:15, 14:30...)
-- Gamma API may have a few seconds delay indexing the new event
-- During this window, old event is closed and new one isn't indexed yet
+**What to do if discovery fails:**
+1. **Check browser** - Make sure Chrome is installed and accessible
+2. **Check network** - Verify you can access `https://polymarket.com/crypto/15m`
+3. **Check the logs** - Look for "PRIMARY DISCOVERY" (UI) and "FALLBACK DISCOVERY" (Gamma) messages
+4. **Try again** - The bot will automatically try both methods
 
-**What to do:**
-1. **Wait 30-60 seconds** - The new market will be indexed
-2. **Run the bot again** - It will automatically use UI fallback if Gamma fails
-3. **Check the logs** - Look for "PRIMARY DISCOVERY" and "FALLBACK DISCOVERY" messages
-4. **Verify network** - Make sure you can access:
-   - `https://gamma-api.polymarket.com/markets`
-   - `https://polymarket.com/crypto/15m`
-
-**Example output when fallback works:**
+**Example output when primary UI discovery works:**
 ```
-🔍 PRIMARY DISCOVERY: Searching Gamma API for prefix: btc-updown-15m-
-❌ PRIMARY DISCOVERY FAILED: No active markets found
-
-🔄 FALLBACK DISCOVERY: Scraping UI for BTC 15m event...
+🔍 PRIMARY DISCOVERY: Scraping UI for BTC 15m event...
    📍 Navigating to: https://polymarket.com/crypto/15m
    ✅ Found BTC event link: /event/btc-updown-15m-jan20-1430
+✅ PRIMARY DISCOVERY SUCCESS!
+```
+
+**Example output when fallback is used:**
+```
+🔍 PRIMARY DISCOVERY: Scraping UI for BTC 15m event...
+❌ PRIMARY DISCOVERY FAILED: Could not find BTC event on page
+
+🔄 FALLBACK DISCOVERY: Searching Gamma API for prefix: btc-updown-15m-
+   📊 Gamma API returned 50 total markets
+   📊 Found 10 markets matching prefix 'btc-updown-15m-'
+   📊 After LIVE NOW filter: 1 markets (filtered out 9 future/past markets)
 ✅ FALLBACK DISCOVERY SUCCESS!
 ```
 
 ### "Gamma returns future rounds" or "Selected wrong market time"
 
-**This happens when Gamma API returns markets scheduled for the future instead of markets that are LIVE now.**
+**This issue is now largely resolved by making UI scraping the PRIMARY discovery method.**
 
-**The Fix (Implemented):**
-- Discovery now filters markets by time using `startDate/endDate` fields from the API
-- Only selects markets where `start <= now < end` (LIVE NOW)
-- Future markets are automatically filtered out
-- If no LIVE markets after filtering, falls back to UI scraping
+The UI always shows the current LIVE market, so you should no longer see future markets being selected. The Gamma API is only used as a fallback when UI scraping is unavailable.
 
-**What you'll see in logs:**
-```
-🔍 PRIMARY DISCOVERY: Searching Gamma API for prefix: btc-updown-15m-
-   📊 Gamma API returned 50 total markets
-   📊 Found 10 markets matching prefix 'btc-updown-15m-'
-   📊 After LIVE NOW filter: 1 markets (filtered out 9 future/past markets)
-✅ PRIMARY DISCOVERY SUCCESS!
-   Selected: LIVE market (start <= now < end)
-   Slug: btc-updown-15m-jan20-1430
-   Start: 2026-01-20 14:30:00 UTC
-   End: 2026-01-20 14:45:00 UTC
-   Reason: This market is LIVE NOW (among 1 live options)
-```
+**If you still see future markets:**
+This means UI discovery failed and Gamma API fallback was used. Check:
+1. Browser is working correctly
+2. `https://polymarket.com/crypto/15m` is accessible
+3. Page layout hasn't changed (may need selector updates)
 
-**If all candidates are future markets:**
-```
-   📊 After LIVE NOW filter: 0 markets (filtered out 10 future/past markets)
-❌ PRIMARY DISCOVERY FAILED: No LIVE markets found (all 10 candidates are future or past markets)
-   This typically means:
-   - Future markets scheduled but not started yet
-   - API indexing delay for new rounds
-   Falling back to UI scraping...
-```
-
-The bot will automatically use the UI fallback (`/crypto/15m`) which always shows the current LIVE market.
+The bot will automatically prefer UI scraping which always gets the correct LIVE market.
 
 ### "Page navigation timeout" or "Timeout waiting for networkidle"
 
@@ -448,14 +437,15 @@ The bot will automatically use the UI fallback (`/crypto/15m`) which always show
 - Polymarket pages have live websockets (for real-time price updates, activity feeds, etc.)
 - The `networkidle` wait condition waits for all network activity to stop
 - With active websockets, network is never idle, so the page never finishes loading
-- This causes navigation to timeout after 30 seconds
+- This causes navigation to timeout
 
 **The Fix (Implemented):**
 - Navigation now uses `wait_until='domcontentloaded'` instead of `networkidle`
 - This waits only for the DOM to be ready, not for all network activity to stop
-- Timeout increased to 90 seconds for slower connections
-- Added 1.5 second stabilization wait after DOM loads
+- Default timeout is now 90 seconds (configurable via `timeout_ms` in config.json)
+- Added 2 second stabilization wait after DOM loads
 - Optionally waits for key page elements (Up/Down buttons) to ensure page is interactive
+- **NEW**: On timeout, browser is left open for manual intervention
 
 **What you'll see in logs:**
 ```
@@ -463,11 +453,28 @@ The bot will automatically use the UI fallback (`/crypto/15m`) which always show
 ✅ Page loaded (domcontentloaded)
 ```
 
+**If a timeout occurs:**
+The browser will stay open and you'll see:
+```
+======================================================================
+⚠️  PAGE LOAD TIMEOUT
+======================================================================
+Page load timeout. Browser left open for manual login.
+Press Enter to close browser and exit...
+======================================================================
+```
+
+This gives you a chance to:
+1. **Manually complete any login/captcha** if needed
+2. **Diagnose network issues** by checking if the page loads in the browser
+3. **Verify Polymarket is accessible** before trying again
+
 **If you still experience timeouts:**
 1. **Check your internet connection** - Slow connections may need more time
-2. **Try again** - Polymarket servers may be slow or experiencing issues
-3. **Verify Polymarket is accessible** - Visit `https://polymarket.com` in your browser
-4. **Check firewall settings** - Ensure your firewall allows connections to Polymarket
+2. **Increase timeout in config.json** - Change `"timeout_ms": 90000` to 120000 (2 minutes) or higher
+3. **Try again** - Polymarket servers may be slow or experiencing issues
+4. **Verify Polymarket is accessible** - Visit `https://polymarket.com` in your browser
+5. **Check firewall settings** - Ensure your firewall allows connections to Polymarket
 
 ### "Could not find UP/DOWN button"
 
@@ -619,9 +626,10 @@ Review these files to track performance and debug issues.
   "browser": {
     "headless": false,                // Show browser window
     "profile_dir": ".pw_profile",     // Browser profile location
-    "timeout_ms": 30000,              // Element wait timeout
+    "timeout_ms": 90000,              // Element wait timeout (90s)
     "retry_attempts": 3,              // Retry clicks N times
-    "slow_mo_ms": 500                 // Slow down actions (ms)
+    "slow_mo_ms": 500,                // Slow down actions (ms)
+    "channel": "chrome"               // Use system Chrome (vs bundled Chromium)
   }
 }
 ```
