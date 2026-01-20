@@ -3,7 +3,7 @@ Gamma API client for discovering active Polymarket markets.
 
 Two-level discovery for 15m crypto markets:
 1. Primary: UI scraping from polymarket.com/crypto/15m (always gets current LIVE market)
-2. Fallback: Gamma API with proper ordering and filtering (when UI unavailable)
+2. Fallback: Gamma API with proper ordering and filtering (when browser fails to start, page scraping fails, or page is unavailable)
 """
 
 import requests
@@ -76,6 +76,7 @@ class GammaAPI:
             
             if not live_markets:
                 print(f"❌ FALLBACK DISCOVERY FAILED: No LIVE markets found (all {len(matching)} candidates are future or past markets)")
+                print(f"   Note: This is a fallback method - UI scraping (primary) was unavailable")
                 print(f"   This typically means:")
                 print(f"   - Future markets scheduled but not started yet")
                 print(f"   - API indexing delay for new rounds")
@@ -427,16 +428,16 @@ class GammaAPI:
         print("\n🌐 LEVEL 1: UI Discovery (Primary)")
         print("-" * 70)
         
-        if page:
+        if not page:
+            print("⚠️  No browser page provided for UI scraping")
+            print("   UI primary discovery unavailable - will use Gamma API fallback")
+        else:
             event_info = self.discover_15m_event_via_ui(asset, page, base_url)
             
             if event_info:
                 print("\n✅ Discovery complete via UI (Primary)")
                 print("="*70 + "\n")
                 return event_info
-        else:
-            print("⚠️  No browser page provided for UI scraping")
-            print("   Skipping primary UI discovery...")
         
         # LEVEL 2: Fallback to Gamma API
         print("\n🔄 LEVEL 2: Gamma API Discovery (Fallback)")
