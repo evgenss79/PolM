@@ -6,6 +6,26 @@ Format: [YYYY-MM-DD] - Description of changes
 
 ---
 
+## [2026-01-20] - FIX: Chromium crash on macOS 15 arm64
+
+### Fixed
+- **Chromium SEGV_ACCERR crash on macOS 15 (Sequoia) arm64**:
+  - **Issue**: Playwright's bundled Chromium (chromium-1097) crashes with SEGV_ACCERR on macOS 15 running on Apple Silicon (arm64)
+  - **Solution**: Added support for using system Chrome channel instead of bundled Chromium
+  - **Configuration**: New `browser.channel` option in config.json (default: "chrome")
+  - **Fallback**: If channel is not specified, falls back to bundled Chromium for backward compatibility
+  - **Files changed**:
+    - `config.json.example`: Added `"channel": "chrome"` to browser section
+    - `src/ui_oneclick.py`: Updated to read channel config and pass to launch_persistent_context
+    - `README_BOT.md`: Added troubleshooting section for macOS 15 arm64 Chromium crashes
+
+### Changed
+- Browser launch now supports `channel` parameter for using system browsers
+- Default configuration now uses Chrome channel for better macOS 15 compatibility
+- Browser startup now logs which browser is being used (bundled Chromium vs Chrome channel)
+
+---
+
 ## [2026-01-20] - CRITICAL FIX: Two-Level Discovery for 15m Crypto Markets
 
 ### Fixed

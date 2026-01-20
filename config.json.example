@@ -62,7 +62,8 @@
     "profile_dir": ".pw_profile",
     "timeout_ms": 30000,
     "retry_attempts": 3,
-    "slow_mo_ms": 500
+    "slow_mo_ms": 500,
+    "channel": "chrome"
   },
 
   "api": {

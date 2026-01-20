@@ -21,6 +21,7 @@ class OneClickUI:
         self.timeout = config.get('timeout_ms', 30000)
         self.retry_attempts = config.get('retry_attempts', 3)
         self.slow_mo = config.get('slow_mo_ms', 500)
+        self.channel = config.get('channel', None)  # Chrome channel (e.g., "chrome"), None for bundled
         
         self.playwright = None
         self.browser: Optional[Browser] = None
@@ -33,14 +34,25 @@ class OneClickUI:
         
         self.playwright = sync_playwright().start()
         
+        # Prepare launch arguments
+        launch_args = {
+            'user_data_dir': self.profile_dir,
+            'headless': self.headless,
+            'slow_mo': self.slow_mo,
+            'viewport': {'width': 1280, 'height': 1024},
+            'args': ['--disable-blink-features=AutomationControlled']
+        }
+        
+        # Add channel if specified (e.g., "chrome" for system Chrome)
+        # This fixes Chromium crashes on macOS 15 arm64
+        if self.channel:
+            launch_args['channel'] = self.channel
+            print(f"  Using browser channel: {self.channel}")
+        else:
+            print(f"  Using bundled Chromium")
+        
         # Launch browser with persistent context (saves login session)
-        self.context = self.playwright.chromium.launch_persistent_context(
-            user_data_dir=self.profile_dir,
-            headless=self.headless,
-            slow_mo=self.slow_mo,
-            viewport={'width': 1280, 'height': 1024},
-            args=['--disable-blink-features=AutomationControlled']
-        )
+        self.context = self.playwright.chromium.launch_persistent_context(**launch_args)
         
         self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
         
