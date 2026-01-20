@@ -1,0 +1,18 @@
+{
+  "comment": "Stake manager state - tracks wins/losses and current stake amount",
+  "current_stake": 2.0,
+  "win_streak": 0,
+  "last_asset": null,
+  "last_slug": null,
+  "last_decision": null,
+  "last_timestamp": null,
+  "last_trade_id": null,
+  "last_result": null,
+  "daily_stats": {
+    "date": null,
+    "trades_count": 0,
+    "wins": 0,
+    "losses": 0,
+    "total_profit_loss": 0.0
+  }
+}

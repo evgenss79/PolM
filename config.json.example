@@ -1,0 +1,82 @@
+{
+  "comment": "Polymarket One-Click Bot Configuration - Edit values below to customize behavior",
+  
+  "assets": {
+    "btc": {
+      "enabled": true,
+      "slug_prefix": "btc-updown-15m-",
+      "symbol": "btc/usd",
+      "display_name": "Bitcoin"
+    },
+    "eth": {
+      "enabled": true,
+      "slug_prefix": "eth-updown-15m-",
+      "symbol": "eth/usd",
+      "display_name": "Ethereum"
+    }
+  },
+
+  "stake": {
+    "comment": "Progressive stake doubling system",
+    "base_stake_usd": 2.0,
+    "max_stake_usd": 1024.0,
+    "max_win_streak": 15,
+    "reset_on_max_streak": true,
+    "result_mode": "manual"
+  },
+
+  "safety": {
+    "comment": "Daily limits to prevent excessive trading",
+    "daily_max_trades": 10,
+    "daily_max_loss_usd": 20.0,
+    "require_manual_confirmation": true
+  },
+
+  "trading": {
+    "comment": "Trading behavior settings",
+    "watch_mode": false,
+    "watch_interval_seconds": 30,
+    "min_seconds_before_close": 120,
+    "max_seconds_before_close": 840
+  },
+
+  "technical_analysis": {
+    "comment": "Technical indicator settings",
+    "candle_interval_seconds": 60,
+    "max_candles": 1000,
+    "ema_fast": 9,
+    "ema_slow": 20,
+    "atr_period": 14,
+    "return_periods": [3, 5]
+  },
+
+  "strategy": {
+    "comment": "Decision engine thresholds",
+    "gap_atr_threshold": 0.8,
+    "time_pressure_seconds": 600
+  },
+
+  "browser": {
+    "comment": "Playwright browser automation settings",
+    "headless": false,
+    "profile_dir": ".pw_profile",
+    "timeout_ms": 30000,
+    "retry_attempts": 3,
+    "slow_mo_ms": 500
+  },
+
+  "api": {
+    "comment": "External API endpoints",
+    "gamma_api_url": "https://gamma-api.polymarket.com/markets",
+    "rtds_websocket_url": "wss://ws-live-data.polymarket.com",
+    "polymarket_base_url": "https://polymarket.com"
+  },
+
+  "logging": {
+    "comment": "Logging configuration",
+    "log_dir": "logs",
+    "log_decisions": true,
+    "log_trades": true,
+    "console_verbose": true
+  }
+}
