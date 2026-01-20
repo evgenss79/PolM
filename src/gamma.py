@@ -21,6 +21,8 @@ class GammaAPI:
         self.api_url = api_url
         # Events endpoint for official discovery
         self.events_url = api_url.replace('/markets', '/events')
+        # Markets endpoint for detailed market info
+        self.markets_url = api_url
     
     def discover_15m_event_via_events_api(
         self,
@@ -760,6 +762,182 @@ class GammaAPI:
             
         except Exception as e:
             print(f"❌ FALLBACK DISCOVERY ERROR: {e}")
+            traceback.print_exc()
+            return None
+    
+    def get_market_details_with_tokens(
+        self,
+        slug: Optional[str] = None,
+        market_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get detailed market information including token IDs for Up/Down outcomes.
+        
+        This is the official method per Polymarket "Placing Your First Order" documentation:
+        "First, get a token ID from the Gamma API"
+        
+        Args:
+            slug: Market slug (e.g., "btc-updown-15m-jan20-1430")
+            market_id: Market ID (alternative to slug)
+        
+        Returns:
+            Dictionary with market details including:
+            - market_slug: str
+            - market_id: str
+            - question: str
+            - tokens: Dict with 'UP' and 'DOWN' token IDs
+            or None if not found
+        """
+        try:
+            print(f"\n🔍 Fetching market details from Gamma API...")
+            
+            if not slug and not market_id:
+                print("❌ Either slug or market_id must be provided")
+                return None
+            
+            # Try to fetch market by slug first
+            if slug:
+                print(f"   Looking for market by slug: {slug}")
+                
+                # Query markets endpoint with slug filter
+                response = requests.get(
+                    self.markets_url,
+                    params={"slug": slug},
+                    timeout=10
+                )
+                response.raise_for_status()
+                markets = response.json()
+                
+                if not markets or len(markets) == 0:
+                    print(f"❌ No market found with slug: {slug}")
+                    return None
+                
+                market = markets[0]
+                
+            elif market_id:
+                print(f"   Looking for market by ID: {market_id}")
+                
+                # Fetch specific market by ID
+                market_url = f"{self.markets_url}/{market_id}"
+                response = requests.get(market_url, timeout=10)
+                response.raise_for_status()
+                market = response.json()
+            
+            # Extract market details
+            market_slug = market.get('slug', 'N/A')
+            market_id_val = market.get('id', 'N/A')
+            question = market.get('question', 'N/A')
+            
+            # Extract token IDs for Up/Down outcomes
+            # Per Polymarket docs: markets have "tokens" or "outcomes" with tokenIds
+            tokens = {}
+            
+            # Strategy 1: Look for 'tokens' array (most common)
+            if 'tokens' in market and isinstance(market['tokens'], list):
+                tokens_array = market['tokens']
+                
+                # Tokens array usually has 2 elements: [outcome1, outcome2]
+                # For binary markets: typically ["Yes", "No"] or [0, 1]
+                # For Up/Down: typically ["Up", "Down"] or similar
+                
+                if len(tokens_array) >= 2:
+                    # For Up/Down markets, first token is typically UP (Yes/win)
+                    # Second token is typically DOWN (No/lose)
+                    # But we need to verify by checking outcome names if available
+                    
+                    # Try to find token IDs with outcome labels
+                    up_token = None
+                    down_token = None
+                    
+                    # Check if tokens have outcome property
+                    for token in tokens_array:
+                        if isinstance(token, dict):
+                            token_id = token.get('token_id') or token.get('tokenId') or token.get('id')
+                            outcome = token.get('outcome', '').lower()
+                            
+                            if 'yes' in outcome or 'up' in outcome or outcome == '1':
+                                up_token = token_id
+                            elif 'no' in outcome or 'down' in outcome or outcome == '0':
+                                down_token = token_id
+                        elif isinstance(token, str):
+                            # Token is just a string ID
+                            if up_token is None:
+                                up_token = token
+                            else:
+                                down_token = token
+                    
+                    # If we found labeled tokens, use them
+                    if up_token and down_token:
+                        tokens['UP'] = up_token
+                        tokens['DOWN'] = down_token
+                    else:
+                        # Fallback: assume first is UP, second is DOWN
+                        tokens['UP'] = tokens_array[0] if isinstance(tokens_array[0], str) else tokens_array[0].get('token_id') or tokens_array[0].get('tokenId')
+                        tokens['DOWN'] = tokens_array[1] if isinstance(tokens_array[1], str) else tokens_array[1].get('token_id') or tokens_array[1].get('tokenId')
+            
+            # Strategy 2: Look for 'outcomes' array (alternative structure)
+            elif 'outcomes' in market and isinstance(market['outcomes'], list):
+                outcomes = market['outcomes']
+                
+                for outcome in outcomes:
+                    if isinstance(outcome, dict):
+                        token_id = outcome.get('token_id') or outcome.get('tokenId') or outcome.get('id')
+                        outcome_name = outcome.get('name', '').lower()
+                        
+                        if 'yes' in outcome_name or 'up' in outcome_name:
+                            tokens['UP'] = token_id
+                        elif 'no' in outcome_name or 'down' in outcome_name:
+                            tokens['DOWN'] = token_id
+            
+            # Strategy 3: Look for conditionId (CLOB requirement)
+            # Per docs: "conditionId" is the key identifier for CLOB trading
+            condition_id = market.get('conditionId') or market.get('condition_id')
+            
+            if not tokens and condition_id:
+                print(f"   ⚠️  No tokens array found, but found conditionId: {condition_id}")
+                # In some cases, conditionId is used directly
+                # We can't determine UP/DOWN without more info, but log it
+            
+            # Validate we found tokens
+            if not tokens or 'UP' not in tokens or 'DOWN' not in tokens:
+                print(f"⚠️  Warning: Could not extract UP/DOWN token IDs from market data")
+                print(f"   Market structure: {list(market.keys())}")
+                if 'tokens' in market:
+                    print(f"   Tokens field: {market['tokens']}")
+                if 'outcomes' in market:
+                    print(f"   Outcomes field: {market['outcomes']}")
+                if condition_id:
+                    print(f"   ConditionId: {condition_id}")
+                    # Return with conditionId even if we don't have individual token IDs
+                    tokens['CONDITION_ID'] = condition_id
+            
+            result = {
+                'market_slug': market_slug,
+                'market_id': market_id_val,
+                'question': question,
+                'tokens': tokens,
+                'condition_id': condition_id,
+                'raw_market': market  # For debugging
+            }
+            
+            print(f"✅ Market details fetched:")
+            print(f"   Slug: {market_slug}")
+            print(f"   Market ID: {market_id_val}")
+            print(f"   Question: {question}")
+            if tokens:
+                if 'UP' in tokens:
+                    print(f"   UP Token ID: {tokens['UP']}")
+                if 'DOWN' in tokens:
+                    print(f"   DOWN Token ID: {tokens['DOWN']}")
+                if 'CONDITION_ID' in tokens:
+                    print(f"   Condition ID: {tokens['CONDITION_ID']}")
+            
+            return result
+            
+        except requests.RequestException as e:
+            print(f"❌ Failed to fetch market details from Gamma API: {e}")
+            return None
+        except Exception as e:
+            print(f"❌ Unexpected error fetching market details: {e}")
             traceback.print_exc()
             return None
     

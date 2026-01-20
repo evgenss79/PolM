@@ -37,6 +37,9 @@ This bot helps you trade BTC and ETH prediction markets on Polymarket by:
 ### Market Discovery
 - Connects to Polymarket's Gamma API to find active BTC/ETH "Up/Down 15m" markets
 - Markets change every 15 minutes, and the bot finds the latest one automatically
+- **Official Market Anchoring**: Fetches token IDs for Up/Down outcomes from Gamma API
+  - Per Polymarket "Placing Your First Order" documentation
+  - Verifies we're trading the correct market with official identifiers
 
 ### Price Analysis
 - Connects to Polymarket's real-time data service (RTDS)
@@ -47,6 +50,28 @@ This bot helps you trade BTC and ETH prediction markets on Polymarket by:
   - **ATR (Average True Range)** - price volatility
   - **Returns** - recent price momentum
 
+### Price-to-Beat vs Contract Price (IMPORTANT!)
+
+**The bot now strictly validates "Price to beat" to prevent confusion:**
+
+- **Price to beat**: The actual BTC/ETH price the market needs to beat (e.g., $43,250.46)
+  - This is the target price shown on the Polymarket page
+  - Must be > $10,000 for BTC, > $500 for ETH
+  - Example: "Will BTC be above $43,250.46 at 2:45 PM?"
+
+- **Contract price (per share)**: The cost to buy a share of the outcome (e.g., $0.21 or 21¢)
+  - This is NOT the price to beat!
+  - This is what you pay to buy 1 share of "Yes" or "No"
+  - Example: "Yes" shares cost $0.52 each, "No" shares cost $0.48 each
+
+**The bot will NEVER accept contract prices (0.xx) as price-to-beat.** If it detects this, it will:
+1. Show a validation error
+2. Display the context where it found the value
+3. Abort the trading cycle
+4. Ask you to check the page manually
+
+This prevents trading on incorrect data (e.g., thinking BTC needs to beat $0.21 instead of $43,250!)
+
 ### Decision Engine
 The bot analyzes current conditions and chooses Up or Down based on:
 
@@ -54,6 +79,24 @@ The bot analyzes current conditions and chooses Up or Down based on:
 2. **Time Pressure**: If close to market close, adjusts for realistic price movement
 3. **Trend Detection**: Uses EMA crossovers and momentum to predict direction
 4. **Clear Explanation**: Prints why it chose Up or Down in plain English
+
+### Validation & Safety Checks
+
+**Before every trade, the bot validates:**
+
+1. **Price-to-beat is realistic** for the asset (BTC > $10k, ETH > $500)
+2. **RTDS price feed is working** (not 0 ticks, has recent data)
+3. **Prices match** (RTDS current price and price-to-beat are same order of magnitude)
+
+If any check fails, the bot enters **diagnostic mode** and shows you:
+- What went wrong
+- Possible causes
+- What to check manually
+
+**The bot will NOT trade if validation fails.** This protects you from:
+- Trading on incorrect prices
+- Making decisions without live data
+- Confusing contract prices with asset prices
 
 ### Browser Automation
 - Opens Polymarket in your Chrome browser
@@ -543,6 +586,127 @@ Make sure you have enough disk space. Playwright downloads Chromium (~300MB) on 
 If you still experience issues, try:
 - Updating Google Chrome to the latest version
 - Removing the `.pw_profile` directory and logging in again
+
+### "Chromium crashes on macOS 15 arm64" or "SEGV_ACCERR error"
+
+**macOS 15 (Sequoia) on Apple Silicon (arm64) has a known issue with Playwright's bundled Chromium (chromium-1097).**
+
+**Solution**: Use system Chrome instead of bundled Chromium:
+
+1. Install Google Chrome if not already installed: [Download Chrome](https://www.google.com/chrome/)
+2. Update your `config.json` to use the Chrome channel:
+   ```json
+   "browser": {
+     "channel": "chrome"
+   }
+   ```
+3. Run the bot again - it will use your installed Chrome instead of bundled Chromium
+
+**Note**: The example `config.json.example` already has `"channel": "chrome"` by default. If you created your config before this fix, add the `"channel": "chrome"` line to the `"browser"` section.
+
+If you still experience issues, try:
+- Updating Google Chrome to the latest version
+- Removing the `.pw_profile` directory and logging in again
+
+### "VALIDATION FAILED: BTC price to beat is <= 10000" or "ETH price to beat is <= 500"
+
+**This means the bot detected an incorrect price-to-beat value on the page.**
+
+**Why this happens:**
+The bot extracted a value that's too low to be a real BTC/ETH price. This usually means:
+- Extracted a **contract price** (e.g., $0.52 per share) instead of price-to-beat
+- Extracted **odds** or **cents** (e.g., 52¢) instead of price-to-beat
+- Page layout changed and extraction failed
+
+**What the bot does:**
+1. Shows the parsed value and validation threshold
+2. Shows context text around the "Price to beat" label
+3. Aborts the trading cycle (does NOT trade on incorrect data)
+
+**What you should do:**
+1. Check the browser window - what does "Price to beat" actually show?
+2. If the value is correct (e.g., BTC is actually below $10k), manually enter it when prompted
+3. If the extraction is wrong, report the issue with a screenshot
+4. The bot will continue safely without trading on bad data
+
+**Example output:**
+```
+❌ VALIDATION FAILED: BTC price to beat (0.52) is <= 10000
+   This looks like contract price/odds, not BTC price.
+   Context: "Yes 0.52¢ • No 0.48¢ • Price to beat: $43,250.46"
+```
+
+In this case, the bot correctly rejected $0.52 (contract price) and should have extracted $43,250.46.
+
+### "Cross-validation failed: RTDS price and price_to_beat are NOT same order of magnitude"
+
+**This means RTDS current price and price-to-beat don't match.**
+
+**Why this happens:**
+- Price-to-beat was incorrectly extracted (e.g., got contract price $0.21 instead of BTC price $43,000)
+- RTDS price feed has stale data
+- Market data is corrupted
+
+**What the bot does:**
+1. Compares RTDS price vs price_to_beat (should be within 0.5x to 2.0x)
+2. Shows both values and the ratio
+3. Aborts trading cycle if ratio is out of range
+
+**What you should do:**
+1. Check both prices in the output
+2. Verify which one is correct by looking at the page
+3. If price-to-beat is wrong, the validation system caught it (good!)
+4. If RTDS is wrong, check WebSocket connection and wait for fresh data
+
+**Example output:**
+```
+❌ VALIDATION WARNING: RTDS price and price_to_beat are NOT same order of magnitude
+   RTDS current price: $43,250.12
+   Price to beat: $0.52
+   Ratio: 83173.31 (out of range)
+   
+   This suggests price_to_beat was incorrectly parsed.
+   Not safe to trade. Aborting this cycle.
+```
+
+### "No current price available from RTDS" or "RTDS price feed has 0 ticks"
+
+**This means the bot hasn't received any price data from RTDS WebSocket.**
+
+**Why this happens:**
+- WebSocket connection failed to establish
+- No price updates received (server issue)
+- Symbol mismatch in subscription (e.g., subscribed to "btc/usd" but server sends "BTC/USD")
+- Network firewall blocking WebSocket connection
+
+**What the bot does:**
+1. Enters **diagnostic mode**
+2. Shows possible causes
+3. Aborts trading cycle (unsafe to trade without live price data)
+
+**What you should do:**
+1. **Check network connection**: Ensure you can reach `wss://ws-live-data.polymarket.com`
+2. **Check firewall**: WebSocket connections may be blocked
+3. **Restart the bot**: Sometimes the connection just needs a fresh start
+4. **Check logs**: Look for "Connected to RTDS WebSocket" and "Subscribed to topic" messages
+
+**Example output:**
+```
+❌ No current price available from RTDS.
+   DIAGNOSTIC MODE: RTDS price feed has 0 ticks.
+   This could mean:
+   - WebSocket connection failed
+   - No price updates received
+   - Symbol mismatch in subscription
+   
+   ⚠️  Cannot continue trading cycle without RTDS price.
+   Aborting this cycle.
+```
+
+**If this persists:**
+- Check if `https://polymarket.com` is accessible in your browser
+- Try different network (e.g., mobile hotspot vs WiFi)
+- Check system firewall settings
 
 ### "Daily loss limit exceeded"
 

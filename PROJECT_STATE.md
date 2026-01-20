@@ -90,6 +90,30 @@ The repository has been built from scratch with a complete implementation of:
 
 **Price Source**: Chainlink via Polymarket RTDS WebSocket (crypto_prices_chainlink topic)
 
+**Official Market Anchoring** (NEW):
+1. After market discovery, fetch full market details from Gamma API by slug
+2. Extract token IDs for Up/Down outcomes (per Polymarket "Placing Your First Order" docs)
+3. Log: market slug, market ID, token IDs for UP and DOWN
+4. Purpose: Verify we're trading the correct market and have official token identifiers
+
+**Price-to-Beat Parsing with Strict Validation** (NEW):
+1. Label-based extraction: Only extract price near "Price to beat" label on UI
+2. Sanity checks (per asset):
+   - BTC: price_to_beat MUST be > 10000
+   - ETH: price_to_beat MUST be > 500
+   - Any asset: REJECT values in 0-1 range (contract prices like 0.21)
+3. If validation fails: Show diagnostic message and abort trading cycle
+4. Purpose: Never confuse contract price per share (0.xx) with actual BTC/ETH price
+
+**RTDS Cross-Validation** (NEW):
+1. Before making decision, compare RTDS current price vs price_to_beat
+2. Validate they are same order of magnitude (ratio: 0.5x to 2.0x)
+3. If RTDS price is 0/unavailable:
+   - Enter diagnostic mode
+   - Log: "0 ticks collected", possible causes
+   - Abort trading cycle (unsafe to trade without price feed)
+4. Purpose: Detect incorrect price parsing early
+
 **Decision Engine** (`src/strategy.py`):
 1. Parse target price (`price_to_beat`) and time remaining from Polymarket page
 2. Calculate gap: `current_price - price_to_beat`
@@ -223,5 +247,5 @@ The repository has been built from scratch with a complete implementation of:
 
 ---
 
-**Last Updated**: 2026-01-20 (Discovery priority reversed: UI primary, Gamma fallback)
+**Last Updated**: 2026-01-20 (Added official market anchoring via Gamma token IDs and strict price validation)
 **Status**: Building initial implementation

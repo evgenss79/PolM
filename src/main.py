@@ -26,6 +26,11 @@ from .stake_manager import StakeManager
 from .ui_oneclick import OneClickUI
 
 
+# Price validation constants
+MIN_PRICE_RATIO = 0.5  # RTDS vs price_to_beat minimum ratio
+MAX_PRICE_RATIO = 2.0  # RTDS vs price_to_beat maximum ratio
+
+
 class PolymrketBot:
     """Main orchestrator for Polymarket One-Click Bot."""
     
@@ -67,11 +72,12 @@ class PolymrketBot:
         self.strategy = Strategy(self.config.get('strategy'))
         self.stake_manager = StakeManager(self.config.get('stake'), self.state)
         
-        self.ui = OneClickUI(self.config.get('browser'))
+        self.ui = OneClickUI(self.config.get('browser'), asset=self.asset)
         
         # Track current market
         self.current_slug: Optional[str] = None
         self.current_market_url: Optional[str] = None
+        self.current_market_details: Optional[Dict[str, Any]] = None  # Gamma market details with token IDs
         
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -175,6 +181,15 @@ class PolymrketBot:
             print(f"✅ Market discovered!")
             print(f"   URL: {self.current_market_url}")
             print(f"   Source: {market_info.get('source', 'UNKNOWN')}")
+            
+            # Fetch market details with token IDs from Gamma API (official anchoring)
+            print("\n📌 Anchoring market with official Gamma API data...")
+            self.current_market_details = self.gamma.get_market_details_with_tokens(slug=self.current_slug)
+            
+            if not self.current_market_details:
+                print("⚠️  Warning: Could not fetch market details with token IDs")
+                print("   Trading will continue but without token ID verification")
+            
             return True
         
         # Events API failed - try UI fallback (requires browser)
@@ -198,6 +213,14 @@ class PolymrketBot:
         print(f"✅ Market discovered!")
         print(f"   URL: {self.current_market_url}")
         print(f"   Source: {market_info.get('source', 'UNKNOWN')}")
+        
+        # Fetch market details with token IDs from Gamma API (official anchoring)
+        print("\n📌 Anchoring market with official Gamma API data...")
+        self.current_market_details = self.gamma.get_market_details_with_tokens(slug=self.current_slug)
+        
+        if not self.current_market_details:
+            print("⚠️  Warning: Could not fetch market details with token IDs")
+            print("   Trading will continue but without token ID verification")
         
         return True
     
@@ -272,12 +295,53 @@ class PolymrketBot:
         if price_to_beat is None or seconds_left is None:
             price_to_beat, seconds_left = self.ui.ask_manual_market_info()
         
-        # Get current price from candles
+        # Get current price from candles (RTDS Chainlink)
         current_price = self.candles.get_latest_price()
         
         if current_price is None:
-            print("❌ No current price available. Aborting cycle.")
+            print("❌ No current price available from RTDS.")
+            print("   DIAGNOSTIC MODE: RTDS price feed has 0 ticks.")
+            print("   This could mean:")
+            print("   - WebSocket connection failed")
+            print("   - No price updates received")
+            print("   - Symbol mismatch in subscription")
+            print("\n   ⚠️  Cannot continue trading cycle without RTDS price.")
+            print("   Aborting this cycle.")
             return
+        
+        # RTDS vs price_to_beat cross-validation
+        # Per task: RTDS current price and price_to_beat should be same order of magnitude
+        print("\n🔍 Cross-validating RTDS price vs price_to_beat...")
+        
+        # Validate price_to_beat is not zero (would be invalid)
+        if price_to_beat <= 0:
+            print(f"❌ VALIDATION FAILED: price_to_beat is invalid ({price_to_beat:.2f})")
+            print(f"   Price to beat must be > 0")
+            print(f"   ⚠️  Not safe to trade. Aborting this cycle.")
+            return
+        
+        # Calculate order of magnitude difference
+        price_ratio = current_price / price_to_beat
+        
+        # They should be within reasonable range (MIN_PRICE_RATIO to MAX_PRICE_RATIO)
+        # If price_to_beat is way off (e.g., 0.21 vs 43000), ratio will be tiny
+        if price_ratio < MIN_PRICE_RATIO or price_ratio > MAX_PRICE_RATIO:
+            print(f"❌ VALIDATION WARNING: RTDS price and price_to_beat are NOT same order of magnitude")
+            print(f"   RTDS current price: ${current_price:.2f}")
+            print(f"   Price to beat: ${price_to_beat:.2f}")
+            print(f"   Ratio: {price_ratio:.4f}")
+            print(f"\n   This suggests price_to_beat was incorrectly parsed.")
+            print(f"   Possible causes:")
+            print(f"   - Extracted contract price (0.xx) instead of asset price")
+            print(f"   - Extracted odds/cents instead of BTC/ETH price")
+            print(f"   - Page layout changed")
+            print(f"\n   ⚠️  Not safe to trade. Aborting this cycle.")
+            return
+        
+        print(f"✅ Cross-validation passed:")
+        print(f"   RTDS current price: ${current_price:.2f}")
+        print(f"   Price to beat: ${price_to_beat:.2f}")
+        print(f"   Ratio: {price_ratio:.4f} (within acceptable range)")
         
         # Check if time window is suitable
         min_seconds = self.config.get('trading', 'min_seconds_before_close')

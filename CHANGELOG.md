@@ -6,6 +6,63 @@ Format: [YYYY-MM-DD] - Description of changes
 
 ---
 
+## [2026-01-20] - OFFICIAL MARKET ANCHORING: Gamma Token IDs + Strict Price Validation
+
+### Added
+- **Official Market Anchoring via Gamma API Token IDs**:
+  - New method `get_market_details_with_tokens()` in `src/gamma.py`
+  - Fetches full market object from Gamma API by slug or market ID
+  - Extracts outcome token IDs for Up/Down (per Polymarket "Placing Your First Order" docs)
+  - Supports multiple field patterns: `tokens`, `outcomes`, `conditionId`
+  - Logs: market slug, market ID, token IDs for UP and DOWN
+  - Purpose: Guarantee we're on the right market and not confusing data sources
+  
+- **Strict Price-to-Beat Validation**:
+  - Enhanced `find_price_to_beat()` in `src/selectors.py` with label-based extraction
+  - **Sanity checks** (per task requirements):
+    - BTC: price_to_beat must be > 10000
+    - ETH: price_to_beat must be > 500
+    - Any asset: reject values in 0-1 range (contract prices)
+  - **Label-based extraction**: Only extracts price near "Price to beat" label
+  - **Diagnostic output**: Shows context text when validation fails
+  - Purpose: Never accept contract prices (0.xx) or odds as price-to-beat
+  
+- **RTDS Price Cross-Validation**:
+  - Cross-validates RTDS current price vs price_to_beat in trading cycle
+  - **Order of magnitude check**: Ratio must be 0.5x to 2.0x
+  - **Diagnostic mode**: If RTDS price is unavailable (0 ticks), abort cycle with detailed diagnostics
+  - Logs validation results clearly
+  - Purpose: Detect if price_to_beat was incorrectly parsed (e.g., contract price vs BTC price)
+
+### Changed
+- **UI OneClickUI Class** (`src/ui_oneclick.py`):
+  - Now accepts `asset` parameter in constructor for price validation
+  - Passes asset to `Selectors.find_price_to_beat()` for sanity checks
+  
+- **Main Bot Class** (`src/main.py`):
+  - Fetches market details with token IDs after discovery (both events API and UI paths)
+  - Stores `current_market_details` for token ID verification
+  - Added RTDS vs price_to_beat cross-validation in `_trading_cycle()`
+  - Aborts trading cycle if:
+    - RTDS price unavailable (enters diagnostic mode)
+    - Price validation fails (contract price detected)
+    - Cross-validation fails (prices not same order of magnitude)
+
+### Documentation
+- Per task requirements:
+  - Contract price (0.xx per share) vs price-to-beat (BTC/ETH actual price)
+  - Official Gamma API as source of truth for token IDs
+  - RTDS Chainlink as validation anchor for prices
+
+### Files Changed
+- `src/gamma.py`: Added `get_market_details_with_tokens()` method
+- `src/selectors.py`: Enhanced `find_price_to_beat()` with strict validation
+- `src/ui_oneclick.py`: Added asset parameter for validation
+- `src/main.py`: Integrated token IDs and price validation into trading cycle
+- `CHANGELOG.md`: Documented these changes
+
+---
+
 ## [2026-01-20] - MAJOR IMPROVEMENT: Official /events API Discovery + Browser Performance
 
 ### Added
