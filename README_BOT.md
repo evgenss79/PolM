@@ -370,82 +370,108 @@ sudo apt install python3 python3-pip
 
 The bot uses a **two-level discovery system**:
 
-**LEVEL 1 (UI Scraping - Primary)**:
-- Opens `https://polymarket.com/crypto/15m` in browser
-- Finds the Bitcoin or Ethereum "Up or Down – 15 minute" card
-- Extracts the event link directly from the current LIVE market
-- **Always returns the current round**, never future markets
+**LEVEL 1 (Official /events API - Primary)**:
+- Queries Polymarket's official Gamma API: `GET https://gamma-api.polymarket.com/events`
+- Parameters: `active=true&closed=false&order=id&ascending=false&limit=200`
+- Uses pagination (offset: 0, 200, 400...) to find active events
+- Extracts markets from events, looking for `btc-updown-15m-*` or `eth-updown-15m-*`
+- **LIVE NOW filtering** with timezone-aware UTC:
+  - Only keeps markets where: `start <= now < end`
+  - Excludes future markets (start > now)
+  - Excludes past markets (end <= now)
+  - Excludes unknown/unparseable times
+- Selects market with closest end time (most current round)
+- **Fast and reliable** - no browser needed
 - Most reliable method
 
-**LEVEL 2 (Gamma API - Fallback)**:
-- Used only if browser is unavailable or UI scraping fails
-- Queries Polymarket's Gamma API for active markets
-- Searches for events matching `btc-updown-15m-*` or `eth-updown-15m-*`
-- Filters by time to get LIVE markets only
-- May have indexing delays or return future markets
+**LEVEL 2 (UI Scraping - Fallback)**:
+- Used only if events API fails (no LIVE markets found, API error, network issue)
+- Opens `https://polymarket.com/crypto/15m` in browser
+- Finds Bitcoin/Ethereum "Up or Down – 15 minute" card by visible text
+- Extracts the event link directly from the current LIVE market
+- **Always returns the current round**, never future markets
+- Requires browser startup (slower)
 
-**Why UI scraping is now PRIMARY:**
-- Polymarket's UI always shows the current LIVE round
-- Eliminates issues with Gamma API returning future markets
-- More reliable for 15m markets that rotate every 15 minutes
+**Why Official /events API is now PRIMARY:**
+- Official Polymarket API with proper filtering
+- Fast (no browser needed)
+- Reliable LIVE NOW filtering with timezone-aware UTC
+- Proper pagination support
+- UI fallback available if API fails
 
 **What to do if discovery fails:**
-1. **Check browser** - Make sure Chrome is installed and accessible
-2. **Check network** - Verify you can access `https://polymarket.com/crypto/15m`
-3. **Check the logs** - Look for "PRIMARY DISCOVERY" (UI) and "FALLBACK DISCOVERY" (Gamma) messages
+1. **Check network** - Verify you can access `https://gamma-api.polymarket.com/events`
+2. **Check the logs** - Look for "PRIMARY DISCOVERY" (events API) and "FALLBACK DISCOVERY" (UI) messages
+3. **Check browser** (if fallback used) - Make sure Chrome is installed and accessible
 4. **Try again** - The bot will automatically try both methods
 
-**Example output when primary UI discovery works:**
+**Example output when primary events API discovery works:**
 ```
-🔍 PRIMARY DISCOVERY: Scraping UI for BTC 15m event...
-   📍 Navigating to: https://polymarket.com/crypto/15m
-   ✅ Found BTC event link: /event/btc-updown-15m-jan20-1430
+🔍 PRIMARY DISCOVERY: Fetching from Gamma /events API for prefix: btc-updown-15m-
+   📊 Events discovery: fetched 150 events (page 1, offset=0)
+   📊 Candidates by prefix: 8
+   📊 LIVE NOW: 1 (unknown_time excluded: 0; future excluded: 6; past excluded: 1)
 ✅ PRIMARY DISCOVERY SUCCESS!
+   Selected: slug=btc-updown-15m-jan20-1430
+   Start: 2026-01-20 14:30:00 UTC
+   End: 2026-01-20 14:45:00 UTC
+   Reason: LIVE NOW market with closest end time (among 1 live options)
 ```
 
 **Example output when fallback is used:**
 ```
-🔍 PRIMARY DISCOVERY: Scraping UI for BTC 15m event...
-❌ PRIMARY DISCOVERY FAILED: Could not find BTC event on page
+🔍 PRIMARY DISCOVERY: Fetching from Gamma /events API...
+❌ PRIMARY DISCOVERY FAILED: No LIVE NOW markets found
 
-🔄 FALLBACK DISCOVERY: Searching Gamma API for prefix: btc-updown-15m-
-   📊 Gamma API returned 50 total markets
-   📊 Found 10 markets matching prefix 'btc-updown-15m-'
-   📊 After LIVE NOW filter: 1 markets (filtered out 9 future/past markets)
+🔄 LEVEL 2: UI Discovery (Fallback)
+⚠️  Official /events API discovery did not succeed.
+   This can happen when:
+   - No LIVE NOW markets found (future markets scheduled but not started)
+   - API indexing delay for new rounds
+   - Network issues with Gamma API
+
+   Attempting UI scraping fallback...
+🔍 FALLBACK DISCOVERY: Scraping UI for BTC 15m event...
+   📍 Navigating to: https://polymarket.com/crypto/15m
+   ✅ Found BTC event link by text search: /event/btc-updown-15m-jan20-1430
 ✅ FALLBACK DISCOVERY SUCCESS!
 ```
 
-### "Gamma returns future rounds" or "Selected wrong market time"
+### "Future rounds selected" or "Bot selected 'January 21' market"
 
-**This issue is now largely resolved by making UI scraping the PRIMARY discovery method.**
+**This issue is now FIXED by using official /events API with strict LIVE NOW filtering.**
 
-The UI always shows the current LIVE market, so you should no longer see future markets being selected. The Gamma API is only used as a fallback when UI scraping is unavailable.
+The events API uses timezone-aware UTC comparisons:
+- `now = datetime.now(timezone.utc)` (always timezone-aware)
+- Parses start/end times from API and ensures timezone-aware
+- Keeps ONLY: `start <= now < end`
+- Excludes future markets (start > now)
+- Excludes past markets (end <= now)
+- Excludes unreliable times (duration >= 24 hours suggests event-level, not market-level times)
 
 **If you still see future markets:**
-This means UI discovery failed and Gamma API fallback was used. Check:
-1. Browser is working correctly
-2. `https://polymarket.com/crypto/15m` is accessible
-3. Page layout hasn't changed (may need selector updates)
+This means something went wrong with both discovery levels. Check:
+1. Events API is accessible and returning valid data
+2. System clock is correct (UTC timezone)
+3. Browser is working correctly (for fallback)
 
-The bot will automatically prefer UI scraping which always gets the correct LIVE market.
+### "Page navigation timeout" or "Browser hangs on loading"
 
-### "Page navigation timeout" or "Timeout waiting for networkidle"
-
-**This happens when navigating to Polymarket pages takes too long or never completes.**
+**This happens when navigating to Polymarket pages takes too long.**
 
 **The Issue:**
 - Polymarket pages have live websockets (for real-time price updates, activity feeds, etc.)
 - The `networkidle` wait condition waits for all network activity to stop
-- With active websockets, network is never idle, so the page never finishes loading
+- With active websockets, network is never idle, so navigation never completes
 - This causes navigation to timeout
 
 **The Fix (Implemented):**
 - Navigation now uses `wait_until='domcontentloaded'` instead of `networkidle`
 - This waits only for the DOM to be ready, not for all network activity to stop
-- Default timeout is now 90 seconds (configurable via `timeout_ms` in config.json)
-- Added 2 second stabilization wait after DOM loads
-- Optionally waits for key page elements (Up/Down buttons) to ensure page is interactive
-- **NEW**: On timeout, browser is left open for manual intervention
+- Default timeout is now 120 seconds (configurable via `timeout_ms` in config.json)
+- Added 1.5 second stabilization wait after DOM loads
+- Waits for stable page element (Up/Down buttons) with 30s timeout
+- **On timeout, browser is left open for manual intervention** (doesn't auto-close)
 
 **What you'll see in logs:**
 ```
@@ -457,9 +483,9 @@ The bot will automatically prefer UI scraping which always gets the correct LIVE
 The browser will stay open and you'll see:
 ```
 ======================================================================
-⚠️  PAGE LOAD TIMEOUT
+⚠️  NAVIGATION TIMEOUT
 ======================================================================
-Page load timeout. Browser left open for manual login.
+Navigation timeout. Browser left open for manual login.
 Press Enter to close browser and exit...
 ======================================================================
 ```
@@ -471,10 +497,12 @@ This gives you a chance to:
 
 **If you still experience timeouts:**
 1. **Check your internet connection** - Slow connections may need more time
-2. **Increase timeout in config.json** - Change `"timeout_ms": 90000` to 120000 (2 minutes) or higher
-3. **Try again** - Polymarket servers may be slow or experiencing issues
-4. **Verify Polymarket is accessible** - Visit `https://polymarket.com` in your browser
-5. **Check firewall settings** - Ensure your firewall allows connections to Polymarket
+2. **Increase timeout in config.json** - Default is `"timeout_ms": 120000` (2 minutes). Try 180000 (3 minutes) or higher if needed
+3. **Verify browser speed** - Use `"channel": "chrome"` for system Chrome (faster than bundled Chromium)
+4. **Reduce slow_mo** - Ensure `"slow_mo_ms": 0` in config.json (no artificial delays)
+5. **Try again** - Polymarket servers may be slow or experiencing issues
+6. **Verify Polymarket is accessible** - Visit `https://polymarket.com` in your browser
+7. **Check firewall settings** - Ensure your firewall allows connections to Polymarket
 
 ### "Could not find UP/DOWN button"
 

@@ -26,28 +26,45 @@ The repository has been built from scratch with a complete implementation of:
 **Two-Level Discovery System for 15m Crypto Markets**
 
 - **Module**: `src/gamma.py`
-- **Challenge**: 15-minute crypto markets create new events every 15 minutes with rotating slugs (e.g., `btc-updown-15m-jan20-1430`). Gamma API may return future markets instead of current LIVE markets due to indexing issues.
+- **Challenge**: 15-minute crypto markets create new events every 15 minutes with rotating slugs (e.g., `btc-updown-15m-jan20-1430`). Need reliable way to find current LIVE markets without selecting future rounds.
   
-**LEVEL 1 - UI Scraping (Primary)**:
-- **Purpose**: Always gets the current LIVE market, avoiding future market issues
-- Opens `https://polymarket.com/crypto/15m` (aggregator page)
-- Finds asset-specific event card (Bitcoin or Ethereum)
-- Extracts `href` from event link (format: `/event/btc-updown-15m-XXXXXXXX`)
-- Returns structured event data
-- **Advantage**: Polymarket's UI always shows current LIVE round, never future
+**LEVEL 1 - Official Gamma /events API (Primary)**:
+- **Purpose**: Use official Polymarket events endpoint with proper LIVE NOW filtering
+- Endpoint: `GET https://gamma-api.polymarket.com/events?active=true&closed=false&order=id&ascending=false&limit=200&offset=0`
+- **Pagination**: Fetches events in batches with offset (0, 200, 400...) until finding enough candidates (default: 10) or reaching max pages (default: 5)
+- **Extraction**: Checks multiple locations for matching slugs:
+  - `event.slug` (event itself)
+  - `event.markets[].slug` (markets within event)
+  - `event.tickers[]` or `event.slugs[]` (ticker arrays)
+- **Filtering by Slug Prefix**: Matches `btc-updown-15m-` or `eth-updown-15m-`
+- **LIVE NOW Filtering** (timezone-aware UTC):
+  - Parses `startDate`/`endDate` or `startTimestamp`/`endTimestamp` from API
+  - All comparisons use `datetime.now(timezone.utc)` for timezone-aware UTC
+  - Keeps only candidates where: `start <= now < end`
+  - Excludes candidates with:
+    - Unknown/unparseable times → `unknown_time`
+    - Start time in future → `future`
+    - End time in past → `past`
+    - Duration >= 24 hours → `unknown_time` (unreliable event-level times)
+- **Selection**: Among LIVE markets, selects the one with closest end time (most current round)
+- **Logging**:
+  - Events fetched per page with offset
+  - Candidates by prefix
+  - LIVE NOW count with breakdown of excluded categories
+  - Selected market with slug, start/end times, and reason
+- **Advantage**: Official API with proper time filtering, no browser needed, fast
 
-**LEVEL 2 - Gamma API (Fallback)**:
-- **Purpose**: Used when browser is unavailable or UI scraping fails
-- Endpoint: `https://gamma-api.polymarket.com/markets`
-- Parameters:
-  - `closed=false` - Only active markets
-  - `order=id` - Order by market ID (higher IDs = newer)
-  - `ascending=false` - Descending order (newest first)
-  - `limit=100` - Increased coverage for better discovery
-- Filters results by slug prefix (`btc-updown-15m-` or `eth-updown-15m-`)
-- Filters by time: only markets where `start <= now < end` (LIVE NOW)
-- Selects the most recent matching event
-- Extracts timestamp from slug for validation
+**LEVEL 2 - UI Scraping (Fallback)**:
+- **Purpose**: Used when events API fails (no LIVE markets found, API error, network issue)
+- Opens `https://polymarket.com/crypto/15m` (aggregator page)
+- **Text-Based Search** (case-insensitive):
+  - Bitcoin: "Bitcoin Up or Down" + "15 minute"
+  - Ethereum: "Ethereum Up or Down" + "15 minute"
+- Extracts `href` from matching card (format: `/event/btc-updown-15m-XXXXXXXX`)
+- Returns structured event data
+- **Diagnostic Output**: If not found, prints first 10 card titles to help debug
+- **Advantage**: Polymarket's UI always shows current LIVE round, never future
+- **Disadvantage**: Requires browser startup (slower), dependent on UI structure
 - **Limitation**: May return future markets if time filtering fails
 
 **Orchestration** (`discover_15m_market()` method):

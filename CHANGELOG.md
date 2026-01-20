@@ -6,6 +6,78 @@ Format: [YYYY-MM-DD] - Description of changes
 
 ---
 
+## [2026-01-20] - MAJOR IMPROVEMENT: Official /events API Discovery + Browser Performance
+
+### Added
+- **Official Gamma /events API as PRIMARY Discovery**:
+  - New `discover_15m_event_via_events_api()` method using official `/events` endpoint
+  - Endpoint: `GET https://gamma-api.polymarket.com/events?active=true&closed=false&order=id&ascending=false&limit=200&offset=0`
+  - **Pagination Support**: Fetches events in batches (offset: 0, 200, 400...) until finding enough candidates or reaching max pages
+  - **Smart Extraction**: Extracts markets from events, checks event.slug, market.slug, and tickers arrays
+  - **Timezone-Aware UTC LIVE NOW Filtering**: 
+    - All datetime comparisons use `datetime.now(timezone.utc)` for proper UTC handling
+    - Filters candidates: `start <= now < end` (timezone-aware)
+    - Excludes unknown times (unparseable dates)
+    - Excludes future markets (start > now)
+    - Excludes past markets (end <= now)
+    - Rejects unreliable times (24+ hour duration suggests event-level times, not market-level)
+  - **Best Market Selection**: Among LIVE markets, selects the one with closest end time (most current round)
+  - **Comprehensive Logging**:
+    - "Events discovery: fetched X events (page k, offset=...)"
+    - "Candidates by prefix: N"
+    - "LIVE NOW: M (unknown_time excluded: U; future excluded: F; past excluded: P)"
+    - "Selected: slug=..., start=..., end=..., reason=..."
+
+### Changed
+- **Discovery Priority REVERSED (Again)**:
+  - **LEVEL 1 (Primary)**: Official Gamma /events API with LIVE NOW filtering
+  - **LEVEL 2 (Fallback)**: UI scraping from polymarket.com/crypto/15m
+  - This replaces the previous UI-first approach with a more reliable API-first approach
+  - Browser is started ONLY if events API fails (saves time and resources)
+
+- **UI Discovery Enhanced (Fallback)**:
+  - Now searches for visible text: "Bitcoin Up or Down" + "15 minute" (case-insensitive)
+  - Searches for "Ethereum Up or Down" + "15 minute" (case-insensitive)
+  - Diagnostic output: prints first 10 card titles if market not found
+  - More robust text-based matching instead of relying on slug patterns alone
+
+- **Browser Performance Improvements**:
+  - Timeout increased to 120000ms (2 minutes) for better reliability
+  - `slow_mo_ms` default changed from 500 to 0 (no artificial delays)
+  - `retry_attempts` reduced from 3 to 2 (faster failure recovery)
+  - Wait time after goto changed to 1500ms for page stabilization
+  - Stable selector wait (Up/Down buttons) uses 30000ms timeout instead of config timeout
+  - Browser timeout handling: window stays open for manual login on timeout
+
+- **Timezone Handling**:
+  - All datetime operations use timezone-aware UTC (`datetime.now(timezone.utc)`)
+  - `_parse_market_datetime()` and `_parse_candidate_datetime()` return timezone-aware datetimes
+  - `_is_market_live()` uses timezone-aware comparisons
+  - Removed deprecated `datetime.utcfromtimestamp()` in favor of `datetime.fromtimestamp(tz=timezone.utc)`
+
+### Fixed
+- **Future Market Selection Issue**: 
+  - Previous issue: Bot sometimes selected "January 21" markets instead of current LIVE markets
+  - Root cause: Time filtering was not strict enough or used unreliable event-level times
+  - Solution: New events API with strict LIVE NOW filter + timezone-aware UTC + unreliable time detection
+  
+- **Browser Timeout Issues**:
+  - Browser no longer uses `networkidle` wait (which never completes due to WebSockets)
+  - Uses `domcontentloaded` for faster, more reliable page loads
+  - Increased default timeout from 90s to 120s
+  - Browser stays open on timeout for manual intervention
+
+### Files Changed
+- `src/gamma.py`: Complete rewrite of discovery logic with events API as primary
+- `src/main.py`: Updated to try events API first, start browser only if needed
+- `src/ui_oneclick.py`: Browser performance improvements and timeout handling
+- `config.json.example`: Updated browser settings (timeout: 120000, slow_mo_ms: 0, retry_attempts: 2)
+- `CHANGELOG.md`: Documented these changes
+- `PROJECT_STATE.md`: To be updated with new discovery approach
+- `README_BOT.md`: To be updated with troubleshooting for new discovery
+
+---
+
 ## [2026-01-20] - CRITICAL FIX: Discovery priority reversed to always get LIVE markets
 
 ### Fixed
