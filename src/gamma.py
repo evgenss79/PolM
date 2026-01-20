@@ -224,12 +224,12 @@ class GammaAPI:
                     # Try parsing ISO format
                     try:
                         return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-                    except:
+                    except (ValueError, AttributeError):
                         pass
                     # Try parsing as Unix timestamp string
                     try:
                         return datetime.utcfromtimestamp(float(date_str))
-                    except:
+                    except (ValueError, OSError):
                         pass
                 elif isinstance(date_str, (int, float)):
                     # Unix timestamp
@@ -255,7 +255,7 @@ class GammaAPI:
                 elif isinstance(ts, str):
                     try:
                         return datetime.utcfromtimestamp(float(ts))
-                    except:
+                    except (ValueError, OSError):
                         pass
             
             return None
