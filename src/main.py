@@ -313,8 +313,15 @@ class PolymrketBot:
         # Per task: RTDS current price and price_to_beat should be same order of magnitude
         print("\n🔍 Cross-validating RTDS price vs price_to_beat...")
         
+        # Validate price_to_beat is not zero (would be invalid)
+        if price_to_beat <= 0:
+            print(f"❌ VALIDATION FAILED: price_to_beat is invalid ({price_to_beat:.2f})")
+            print(f"   Price to beat must be > 0")
+            print(f"   ⚠️  Not safe to trade. Aborting this cycle.")
+            return
+        
         # Calculate order of magnitude difference
-        price_ratio = current_price / price_to_beat if price_to_beat > 0 else 0
+        price_ratio = current_price / price_to_beat
         
         # They should be within reasonable range (MIN_PRICE_RATIO to MAX_PRICE_RATIO)
         # If price_to_beat is way off (e.g., 0.21 vs 43000), ratio will be tiny
