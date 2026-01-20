@@ -11,17 +11,25 @@ class Selectors:
     """Robust element selectors for Polymarket pages."""
     
     @staticmethod
-    def find_price_to_beat(page: Page, timeout: int = 10000) -> Optional[float]:
-        """Find 'PRICE TO BEAT' value on the page.
+    def find_price_to_beat(page: Page, timeout: int = 10000, asset: Optional[str] = None) -> Optional[float]:
+        """Find 'PRICE TO BEAT' value on the page with strict label-based extraction.
+        
+        Per task requirements:
+        - Parse "Price to beat" ONLY from UI near the label "Price to beat"
+        - Do NOT extract from contract prices (0.xx), cents, or odds
+        - Add strict sanity checks: BTC > 10000, ETH > 500
         
         Args:
             page: Playwright page object
             timeout: Timeout in milliseconds
+            asset: Asset type ('btc' or 'eth') for sanity checks
         
         Returns:
-            Price value or None if not found
+            Price value or None if not found / validation failed
         """
         try:
+            print("🔍 Parsing 'Price to beat' with label-based extraction...")
+            
             # Look for text containing "PRICE TO BEAT" or "Price to beat"
             # Then find the price value nearby
             
@@ -30,31 +38,78 @@ class Selectors:
                 # Strategy 1: Look for exact text
                 lambda: page.locator("text=/PRICE TO BEAT/i").first,
                 # Strategy 2: Look in headers/labels
-                lambda: page.locator("h3, h4, label, div").filter(has_text=re.compile(r"price to beat", re.I)).first,
+                lambda: page.locator("h3, h4, label, div, span").filter(has_text=re.compile(r"price to beat", re.I)).first,
             ]
+            
+            parsed_value = None
+            context_text = None
             
             for strategy in strategies:
                 try:
                     element = strategy()
                     element.wait_for(timeout=timeout)
                     
-                    # Look for price pattern nearby
+                    # Look for price pattern nearby (in parent container)
                     parent = element.locator('xpath=../..')
-                    text = parent.inner_text()
+                    context_text = parent.inner_text()
                     
                     # Extract price (formats: $1,234.56 or 1234.56)
-                    match = re.search(r'\$?([\d,]+\.?\d*)', text)
-                    if match:
-                        price_str = match.group(1).replace(',', '')
-                        price = float(price_str)
-                        print(f"✅ Found price to beat: ${price:.2f}")
-                        return price
+                    # Look for large numbers (crypto prices are typically > 100)
+                    matches = re.findall(r'\$?([\d,]+\.?\d*)', context_text)
+                    
+                    for match in matches:
+                        price_str = match.replace(',', '')
+                        try:
+                            price = float(price_str)
+                            
+                            # Skip obviously wrong values:
+                            # - Contract prices (0.xx range)
+                            # - Cents (< 1.00)
+                            # - Small odds values (< 10)
+                            if price < 10:
+                                continue
+                            
+                            # This looks like a real price, use it
+                            parsed_value = price
+                            break
+                        except ValueError:
+                            continue
+                    
+                    if parsed_value:
+                        break
                 
                 except PlaywrightTimeoutError:
                     continue
             
-            print("⚠️  Could not find price to beat on page")
-            return None
+            if parsed_value is None:
+                print("⚠️  Could not find price to beat on page")
+                return None
+            
+            # Sanity check validation per task requirements
+            if asset:
+                asset_lower = asset.lower()
+                
+                if asset_lower == 'btc' and parsed_value <= 10000:
+                    print(f"❌ VALIDATION FAILED: BTC price to beat ({parsed_value:.2f}) is <= 10000")
+                    print(f"   This looks like contract price/odds, not BTC price.")
+                    print(f"   Context: {context_text[:200]}")
+                    return None
+                
+                elif asset_lower == 'eth' and parsed_value <= 500:
+                    print(f"❌ VALIDATION FAILED: ETH price to beat ({parsed_value:.2f}) is <= 500")
+                    print(f"   This looks like contract price/odds, not ETH price.")
+                    print(f"   Context: {context_text[:200]}")
+                    return None
+            
+            # Additional sanity check: if value is between 0 and 1, it's likely a contract price
+            if 0 < parsed_value < 1:
+                print(f"❌ VALIDATION FAILED: Parsed value {parsed_value:.2f} is in contract price range (0.xx)")
+                print(f"   This is NOT a price to beat. Aborting.")
+                print(f"   Context: {context_text[:200]}")
+                return None
+            
+            print(f"✅ Found and validated price to beat: ${parsed_value:.2f}")
+            return parsed_value
         
         except Exception as e:
             print(f"❌ Error finding price to beat: {e}")

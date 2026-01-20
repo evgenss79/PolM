@@ -11,10 +11,11 @@ import time
 class OneClickUI:
     """Browser automation for Polymarket One-Click trading."""
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], asset: Optional[str] = None):
         """
         Args:
             config: Browser configuration from config.json
+            asset: Asset type ('btc' or 'eth') for price validation
         """
         self.headless = config.get('headless', False)
         self.profile_dir = config.get('profile_dir', '.pw_profile')
@@ -22,6 +23,7 @@ class OneClickUI:
         self.retry_attempts = config.get('retry_attempts', 3)
         self.slow_mo = config.get('slow_mo_ms', 500)
         self.channel = config.get('channel', None)  # Chrome channel (e.g., "chrome"), None for bundled
+        self.asset = asset  # For price validation
         
         self.playwright = None
         self.browser: Optional[Browser] = None
@@ -114,7 +116,7 @@ class OneClickUI:
         """
         print("🔍 Parsing market information...")
         
-        price_to_beat = Selectors.find_price_to_beat(self.page, timeout=self.timeout)
+        price_to_beat = Selectors.find_price_to_beat(self.page, timeout=self.timeout, asset=self.asset)
         seconds_left = Selectors.find_countdown(self.page, timeout=self.timeout)
         
         if price_to_beat is None or seconds_left is None:
