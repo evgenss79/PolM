@@ -2,15 +2,15 @@
 Gamma API client for discovering active Polymarket markets.
 
 Two-level discovery for 15m crypto markets:
-1. Primary: UI scraping from polymarket.com/crypto/15m (always gets current LIVE market)
-2. Fallback: Gamma API with proper ordering and filtering (when browser fails to start, page scraping fails, or page is unavailable)
+1. Primary: Official Gamma /events API with proper LIVE NOW filtering
+2. Fallback: UI scraping from polymarket.com/crypto/15m (when events API fails)
 """
 
 import requests
 import time
 import traceback
 from typing import Optional, Dict, Any, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 
 
@@ -19,10 +19,351 @@ class GammaAPI:
     
     def __init__(self, api_url: str):
         self.api_url = api_url
+        # Events endpoint for official discovery
+        self.events_url = api_url.replace('/markets', '/events')
+    
+    def discover_15m_event_via_events_api(
+        self,
+        slug_prefix: str,
+        max_candidates: int = 10,
+        max_pages: int = 5
+    ) -> Optional[Dict[str, Any]]:
+        """PRIMARY discovery: Fetch events from official Gamma /events API.
+        
+        Uses Polymarket's official /events endpoint with proper filtering and pagination.
+        Implements LIVE NOW filtering with timezone-aware UTC comparisons.
+        
+        Args:
+            slug_prefix: Market slug prefix (e.g., "btc-updown-15m-")
+            max_candidates: Stop pagination after finding N candidates (default: 10)
+            max_pages: Maximum pages to fetch (default: 5)
+        
+        Returns:
+            Event/market data dictionary or None if not found
+        """
+        try:
+            print(f"🔍 PRIMARY DISCOVERY: Fetching from Gamma /events API for prefix: {slug_prefix}")
+            
+            all_candidates = []
+            offset = 0
+            limit = 200
+            page = 0
+            
+            # Pagination loop
+            while page < max_pages:
+                page += 1
+                
+                # Fetch events from API with official parameters
+                response = requests.get(
+                    self.events_url,
+                    params={
+                        "active": "true",        # Only active events
+                        "closed": "false",       # Exclude closed events
+                        "order": "id",           # Order by ID
+                        "ascending": "false",    # Descending (newest first)
+                        "limit": limit,
+                        "offset": offset
+                    },
+                    timeout=10
+                )
+                response.raise_for_status()
+                
+                events = response.json()
+                print(f"   📊 Events discovery: fetched {len(events)} events (page {page}, offset={offset})")
+                
+                if not events:
+                    print(f"   ℹ️  No more events returned (pagination complete)")
+                    break
+                
+                # Extract candidates from events
+                page_candidates = self._extract_candidates_from_events(events, slug_prefix)
+                all_candidates.extend(page_candidates)
+                
+                print(f"   📊 Candidates by prefix: +{len(page_candidates)} (total: {len(all_candidates)})")
+                
+                # Stop if we have enough candidates
+                if len(all_candidates) >= max_candidates:
+                    print(f"   ✅ Found {len(all_candidates)} candidates (>= {max_candidates}), stopping pagination")
+                    break
+                
+                # Prepare for next page
+                offset += limit
+            
+            print(f"   📊 Total candidates found: {len(all_candidates)}")
+            
+            if not all_candidates:
+                print(f"❌ PRIMARY DISCOVERY FAILED: No candidates found for prefix: {slug_prefix}")
+                return None
+            
+            # Filter by LIVE NOW with timezone-aware UTC
+            now = datetime.now(timezone.utc)
+            live_markets = []
+            unknown_time_count = 0
+            future_count = 0
+            past_count = 0
+            
+            for candidate in all_candidates:
+                is_live, status = self._is_candidate_live_now(candidate, now)
+                
+                if is_live:
+                    live_markets.append(candidate)
+                elif status == 'unknown_time':
+                    unknown_time_count += 1
+                elif status == 'future':
+                    future_count += 1
+                elif status == 'past':
+                    past_count += 1
+            
+            print(f"   📊 LIVE NOW: {len(live_markets)} (unknown_time excluded: {unknown_time_count}; future excluded: {future_count}; past excluded: {past_count})")
+            
+            if not live_markets:
+                print(f"❌ PRIMARY DISCOVERY FAILED: No LIVE NOW markets found")
+                print(f"   - All {len(all_candidates)} candidates are future, past, or have unknown times")
+                return None
+            
+            # Select the best candidate: closest end time (most current round)
+            selected = self._select_best_live_market(live_markets, now)
+            
+            if not selected:
+                print(f"❌ PRIMARY DISCOVERY FAILED: Could not select best market")
+                return None
+            
+            # Log selection details
+            slug = selected.get('slug')
+            start_str = self._format_candidate_time(selected, 'start')
+            end_str = self._format_candidate_time(selected, 'end')
+            
+            print(f"✅ PRIMARY DISCOVERY SUCCESS!")
+            print(f"   Selected: slug={slug}")
+            print(f"   Start: {start_str}")
+            print(f"   End: {end_str}")
+            print(f"   Reason: LIVE NOW market with closest end time (among {len(live_markets)} live options)")
+            
+            return selected
+            
+        except requests.RequestException as e:
+            print(f"❌ PRIMARY DISCOVERY ERROR: Failed to fetch from Gamma /events API: {e}")
+            return None
+        except Exception as e:
+            print(f"❌ PRIMARY DISCOVERY ERROR: Unexpected error: {e}")
+            traceback.print_exc()
+            return None
+    
+    def _extract_candidates_from_events(
+        self,
+        events: List[Dict[str, Any]],
+        slug_prefix: str
+    ) -> List[Dict[str, Any]]:
+        """Extract market candidates from events matching slug prefix.
+        
+        Args:
+            events: List of event dictionaries from API
+            slug_prefix: Market slug prefix to match
+        
+        Returns:
+            List of candidate dictionaries with normalized structure
+        """
+        candidates = []
+        
+        for event in events:
+            # Check event slug
+            event_slug = event.get('slug', '')
+            if event_slug.startswith(slug_prefix):
+                # Event itself is a match
+                candidates.append({
+                    'slug': event_slug,
+                    'id': event.get('id'),
+                    'question': event.get('question') or event.get('title', 'N/A'),
+                    'start': event.get('startDate') or event.get('startTimestamp'),
+                    'end': event.get('endDate') or event.get('endTimestamp'),
+                    'source_type': 'event',
+                    'raw': event
+                })
+            
+            # Check markets within event
+            markets = event.get('markets', [])
+            if isinstance(markets, list):
+                for market in markets:
+                    market_slug = market.get('slug', '')
+                    if market_slug.startswith(slug_prefix):
+                        # Market is a match
+                        candidates.append({
+                            'slug': market_slug,
+                            'id': market.get('id') or event.get('id'),
+                            'question': market.get('question') or event.get('question', 'N/A'),
+                            'start': market.get('startDate') or event.get('startDate'),
+                            'end': market.get('endDate') or event.get('endDate'),
+                            'source_type': 'market',
+                            'raw': market
+                        })
+            
+            # Check tickers/slugs arrays if present
+            tickers = event.get('tickers', []) or event.get('slugs', [])
+            if isinstance(tickers, list):
+                for ticker in tickers:
+                    if isinstance(ticker, str) and ticker.startswith(slug_prefix):
+                        # Ticker is a match
+                        candidates.append({
+                            'slug': ticker,
+                            'id': event.get('id'),
+                            'question': event.get('question', 'N/A'),
+                            'start': event.get('startDate'),
+                            'end': event.get('endDate'),
+                            'source_type': 'ticker',
+                            'raw': event
+                        })
+        
+        return candidates
+    
+    def _is_candidate_live_now(
+        self,
+        candidate: Dict[str, Any],
+        now: datetime
+    ) -> Tuple[bool, str]:
+        """Check if candidate is LIVE NOW with timezone-aware UTC comparison.
+        
+        Args:
+            candidate: Candidate dictionary
+            now: Current UTC datetime (timezone-aware)
+        
+        Returns:
+            Tuple of (is_live: bool, status: str)
+            Status can be: 'live', 'future', 'past', 'unknown_time'
+        """
+        try:
+            start_dt = self._parse_candidate_datetime(candidate, 'start')
+            end_dt = self._parse_candidate_datetime(candidate, 'end')
+            
+            # If we can't parse times, mark as unknown_time (not live)
+            if start_dt is None or end_dt is None:
+                return False, 'unknown_time'
+            
+            # Ensure timezone-aware comparison
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
+            
+            # Check if unreliable (e.g., full day duration suggests event-level times, not market-level)
+            duration = (end_dt - start_dt).total_seconds()
+            if duration >= 86400:  # 24 hours or more
+                # Likely unreliable event-level times, not specific market times
+                return False, 'unknown_time'
+            
+            # LIVE NOW check: start <= now < end
+            if start_dt <= now < end_dt:
+                return True, 'live'
+            elif now < start_dt:
+                return False, 'future'
+            else:
+                return False, 'past'
+                
+        except Exception as e:
+            return False, 'unknown_time'
+    
+    def _parse_candidate_datetime(
+        self,
+        candidate: Dict[str, Any],
+        time_type: str
+    ) -> Optional[datetime]:
+        """Parse start or end datetime from candidate data.
+        
+        Args:
+            candidate: Candidate dictionary
+            time_type: 'start' or 'end'
+        
+        Returns:
+            Parsed datetime (timezone-aware UTC) or None if not available
+        """
+        try:
+            # Get the time value from candidate
+            time_val = candidate.get(time_type)
+            
+            if time_val is None:
+                return None
+            
+            # Try parsing as ISO string
+            if isinstance(time_val, str):
+                # ISO format with Z: "2026-01-20T14:30:00Z"
+                try:
+                    if 'T' in time_val:
+                        # Remove 'Z' and add timezone
+                        dt = datetime.fromisoformat(time_val.replace('Z', '+00:00'))
+                        # Ensure UTC
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        return dt
+                except ValueError:
+                    pass
+                
+                # Try parsing as Unix timestamp string
+                try:
+                    ts = float(time_val)
+                    return datetime.fromtimestamp(ts, tz=timezone.utc)
+                except (ValueError, OSError, OverflowError):
+                    pass
+            
+            # Try parsing as Unix timestamp (int/float)
+            elif isinstance(time_val, (int, float)):
+                return datetime.fromtimestamp(time_val, tz=timezone.utc)
+            
+            return None
+            
+        except Exception:
+            return None
+    
+    def _select_best_live_market(
+        self,
+        live_markets: List[Dict[str, Any]],
+        now: datetime
+    ) -> Optional[Dict[str, Any]]:
+        """Select the best LIVE market (closest end time = most current round).
+        
+        Args:
+            live_markets: List of LIVE market candidates
+            now: Current UTC datetime
+        
+        Returns:
+            Best market candidate or None
+        """
+        if not live_markets:
+            return None
+        
+        # Sort by end time (earliest end time = most current round)
+        def sort_key(candidate):
+            end_dt = self._parse_candidate_datetime(candidate, 'end')
+            if end_dt is None:
+                return datetime.max.replace(tzinfo=timezone.utc)
+            return end_dt
+        
+        sorted_markets = sorted(live_markets, key=sort_key)
+        
+        # Return the one with earliest end time (most current)
+        return sorted_markets[0]
+    
+    def _format_candidate_time(
+        self,
+        candidate: Dict[str, Any],
+        time_type: str
+    ) -> Optional[str]:
+        """Format start or end time for display.
+        
+        Args:
+            candidate: Candidate dictionary
+            time_type: 'start' or 'end'
+        
+        Returns:
+            Formatted time string or None
+        """
+        dt = self._parse_candidate_datetime(candidate, time_type)
+        if dt:
+            return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        return None
     
     def find_active_market(self, slug_prefix: str) -> Optional[Dict[str, Any]]:
-        """Find the most recent active market matching slug prefix (FALLBACK discovery).
+        """Find the most recent active market matching slug prefix (LEGACY fallback).
         
+        This method uses the old /markets endpoint as a last resort.
         Uses enhanced Gamma API query with proper ordering to find fresh 15m events.
         Filters out future markets by checking startDate/endDate to only select live markets.
         
@@ -33,7 +374,7 @@ class GammaAPI:
             Market data dictionary or None if not found
         """
         try:
-            print(f"🔍 FALLBACK DISCOVERY: Searching Gamma API for prefix: {slug_prefix}")
+            print(f"🔍 LEGACY FALLBACK: Searching Gamma /markets API for prefix: {slug_prefix}")
             
             # Query Gamma API with enhanced parameters for 15m discovery
             response = requests.get(
@@ -49,7 +390,7 @@ class GammaAPI:
             response.raise_for_status()
             
             markets = response.json()
-            print(f"   📊 Gamma API returned {len(markets)} total markets")
+            print(f"   📊 Gamma /markets API returned {len(markets)} total markets")
             
             # Filter markets by slug prefix
             matching = [
@@ -60,11 +401,11 @@ class GammaAPI:
             print(f"   📊 Found {len(matching)} markets matching prefix '{slug_prefix}'")
             
             if not matching:
-                print(f"❌ FALLBACK DISCOVERY FAILED: No active markets found for prefix: {slug_prefix}")
+                print(f"❌ LEGACY FALLBACK FAILED: No active markets found for prefix: {slug_prefix}")
                 return None
             
             # Filter by time: only keep markets that are LIVE NOW (start <= now < end)
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             live_markets = []
             
             for market in matching:
@@ -75,11 +416,7 @@ class GammaAPI:
             print(f"   📊 After LIVE NOW filter: {len(live_markets)} markets (filtered out {len(matching) - len(live_markets)} future/past markets)")
             
             if not live_markets:
-                print(f"❌ FALLBACK DISCOVERY FAILED: No LIVE markets found (all {len(matching)} candidates are future or past markets)")
-                print(f"   Note: This is a fallback method - UI scraping (primary) was unavailable")
-                print(f"   This typically means:")
-                print(f"   - Future markets scheduled but not started yet")
-                print(f"   - API indexing delay for new rounds")
+                print(f"❌ LEGACY FALLBACK FAILED: No LIVE markets found (all {len(matching)} candidates are future or past markets)")
                 return None
             
             # Sort by most recent (newest first) - double-check ordering
@@ -99,7 +436,7 @@ class GammaAPI:
             start_time_str = self._format_market_time(market, 'start')
             end_time_str = self._format_market_time(market, 'end')
             
-            print(f"✅ FALLBACK DISCOVERY SUCCESS!")
+            print(f"✅ LEGACY FALLBACK SUCCESS!")
             print(f"   Selected: LIVE market (start <= now < end)")
             print(f"   Slug: {slug}")
             print(f"   Question: {question}")
@@ -115,10 +452,10 @@ class GammaAPI:
             return market
             
         except requests.RequestException as e:
-            print(f"❌ FALLBACK DISCOVERY ERROR: Failed to fetch from Gamma API: {e}")
+            print(f"❌ LEGACY FALLBACK ERROR: Failed to fetch from Gamma /markets API: {e}")
             return None
         except Exception as e:
-            print(f"❌ FALLBACK DISCOVERY ERROR: Unexpected error: {e}")
+            print(f"❌ LEGACY FALLBACK ERROR: Unexpected error: {e}")
             return None
     
     def get_market_url(self, slug: str, base_url: str) -> str:
@@ -180,7 +517,7 @@ class GammaAPI:
         
         Args:
             market: Market dictionary from Gamma API
-            now: Current UTC datetime
+            now: Current UTC datetime (timezone-aware)
         
         Returns:
             True if market is live now, False otherwise
@@ -191,17 +528,22 @@ class GammaAPI:
             start_dt = self._parse_market_datetime(market, 'start')
             end_dt = self._parse_market_datetime(market, 'end')
             
-            # If we can't parse times, assume it's live (fail-open for backward compatibility)
+            # If we can't parse times, assume it's NOT live (fail-closed)
             if start_dt is None or end_dt is None:
-                return True
+                return False
+            
+            # Ensure timezone-aware
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
             
             # Check if market is live: start <= now < end
             return start_dt <= now < end_dt
             
         except Exception as e:
-            # If parsing fails, assume market is live (fail-open)
-            print(f"   ⚠️  Could not parse market times, assuming live: {e}")
-            return True
+            # If parsing fails, assume market is NOT live (fail-closed)
+            return False
     
     def _parse_market_datetime(self, market: Dict[str, Any], time_type: str) -> Optional[datetime]:
         """Parse start or end datetime from market data.
@@ -211,7 +553,7 @@ class GammaAPI:
             time_type: 'start' or 'end'
         
         Returns:
-            Parsed datetime or None if not available
+            Parsed datetime (timezone-aware UTC) or None if not available
         """
         try:
             # Try different field name patterns
@@ -223,17 +565,21 @@ class GammaAPI:
                 if isinstance(date_str, str):
                     # Try parsing ISO format
                     try:
-                        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        # Ensure timezone-aware UTC
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        return dt
                     except ValueError:
                         pass
                     # Try parsing as Unix timestamp string
                     try:
-                        return datetime.utcfromtimestamp(float(date_str))
+                        return datetime.fromtimestamp(float(date_str), tz=timezone.utc)
                     except (ValueError, OSError, OverflowError):
                         pass
                 elif isinstance(date_str, (int, float)):
                     # Unix timestamp
-                    return datetime.utcfromtimestamp(date_str)
+                    return datetime.fromtimestamp(date_str, tz=timezone.utc)
             
             # Pattern 2: Separate date and time fields (startDate + startTime)
             date_field = f"{time_type}Date"
@@ -244,17 +590,19 @@ class GammaAPI:
                 if date_val and time_val:
                     # Combine date and time strings
                     datetime_str = f"{date_val} {time_val}"
-                    return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+                    dt = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+                    # Ensure timezone-aware UTC
+                    return dt.replace(tzinfo=timezone.utc)
             
             # Pattern 3: Single timestamp field (e.g., "startTimestamp")
             timestamp_field = f"{time_type}Timestamp"
             if timestamp_field in market and market[timestamp_field]:
                 ts = market[timestamp_field]
                 if isinstance(ts, (int, float)):
-                    return datetime.utcfromtimestamp(ts)
+                    return datetime.fromtimestamp(ts, tz=timezone.utc)
                 elif isinstance(ts, str):
                     try:
-                        return datetime.utcfromtimestamp(float(ts))
+                        return datetime.fromtimestamp(float(ts), tz=timezone.utc)
                     except (ValueError, OSError, OverflowError):
                         pass
             
@@ -285,9 +633,9 @@ class GammaAPI:
         base_url: str,
         page_load_delay: int = 2
     ) -> Optional[Dict[str, Any]]:
-        """PRIMARY discovery: Scrape event from polymarket.com/crypto/15m page.
+        """FALLBACK discovery: Scrape event from polymarket.com/crypto/15m page.
         
-        This always returns the current LIVE market, avoiding future market issues.
+        Only used when events API fails. Searches for visible text matching asset and time.
         
         Args:
             asset: Asset name ('BTC' or 'ETH')
@@ -299,7 +647,7 @@ class GammaAPI:
             Dictionary with event info or None if failed
         """
         try:
-            print(f"\n🔍 PRIMARY DISCOVERY: Scraping UI for {asset} 15m event...")
+            print(f"\n🔍 FALLBACK DISCOVERY: Scraping UI for {asset} 15m event...")
             
             # Navigate to the 15m crypto aggregator page
             crypto_15m_url = f"{base_url}/crypto/15m"
@@ -313,54 +661,70 @@ class GammaAPI:
             # Wait for page to fully load (allow dynamic content to render)
             time.sleep(page_load_delay)
             
-            # Look for the asset card (Bitcoin or Ethereum)
-            asset_names = {
-                'BTC': ['Bitcoin', 'BTC'],
-                'ETH': ['Ethereum', 'ETH']
+            # Asset-specific search terms (case-insensitive)
+            # Look for "[Asset] Up or Down" + "15 minute"
+            asset_searches = {
+                'BTC': ['Bitcoin Up or Down', 'Bitcoin Up or down'],
+                'ETH': ['Ethereum Up or Down', 'Ethereum Up or down']
             }
             
-            search_terms = asset_names.get(asset.upper(), [asset])
+            search_terms = asset_searches.get(asset.upper(), [f'{asset} Up or Down'])
+            time_indicator = '15 minute'  # Look for "15 minute" text
             
-            print(f"   🔍 Looking for {asset} event card...")
+            print(f"   🔍 Looking for {asset} event card with text: '{search_terms[0]}' and '{time_indicator}'...")
             
             event_href = None
             
-            # Try to find event link using multiple strategies
-            for term in search_terms:
+            # Try to find event link by text content
+            links_locator = page.locator('a[href*="/event/"]')
+            link_count = links_locator.count()
+            
+            print(f"   📊 Found {link_count} total event links on page")
+            
+            # Collect all visible card titles for diagnostics
+            all_card_titles = []
+            
+            for i in range(link_count):
                 try:
-                    # Strategy 1: Find card containing the asset name and get its link
-                    # Look for links with /event/ in href
-                    # Use count() and nth() for better memory efficiency
-                    links_locator = page.locator('a[href*="/event/"]')
-                    link_count = links_locator.count()
+                    link = links_locator.nth(i)
+                    # Get the href
+                    href = link.get_attribute('href')
+                    if not href:
+                        continue
                     
-                    for i in range(link_count):
-                        try:
-                            link = links_locator.nth(i)
-                            # Get the href
-                            href = link.get_attribute('href')
-                            if not href:
-                                continue
-                            
-                            # Check if this link is related to our asset
-                            # by looking at the slug pattern
+                    # Get the text content of the card (case-insensitive search)
+                    try:
+                        text_content = link.text_content() or ''
+                        text_lower = text_content.lower()
+                        
+                        # Collect for diagnostics
+                        if text_content.strip():
+                            all_card_titles.append(text_content.strip()[:100])  # First 100 chars
+                        
+                        # Check if this card matches our asset
+                        asset_match = any(term.lower() in text_lower for term in search_terms)
+                        time_match = time_indicator.lower() in text_lower
+                        
+                        if asset_match and time_match:
+                            # Also check slug pattern for confirmation
                             slug_pattern = f"{asset.lower()}-updown-15m-"
                             if slug_pattern in href:
                                 event_href = href
-                                print(f"   ✅ Found {asset} event link: {href}")
+                                print(f"   ✅ Found {asset} event link by text search: {href}")
                                 break
-                        except Exception:
-                            continue
-                    
-                    if event_href:
-                        break
+                    except Exception:
+                        pass
                         
-                except Exception as e:
-                    print(f"   ⚠️  Strategy failed for term '{term}': {e}")
+                except Exception:
                     continue
             
             if not event_href:
-                print(f"❌ PRIMARY DISCOVERY FAILED: Could not find {asset} event on {crypto_15m_url}")
+                print(f"❌ FALLBACK DISCOVERY FAILED: Could not find {asset} event on {crypto_15m_url}")
+                print(f"\n   🔍 DIAGNOSTIC: First 10 card titles found on page:")
+                for idx, title in enumerate(all_card_titles[:10], 1):
+                    print(f"      {idx}. {title}")
+                if len(all_card_titles) == 0:
+                    print(f"      (No card titles found - page may not have loaded correctly)")
                 return None
             
             # Parse the event info
@@ -382,10 +746,10 @@ class GammaAPI:
                 'url': full_url,
                 'asset': asset.upper(),
                 'timestamp': timestamp_info,
-                'source': 'UI_PRIMARY'
+                'source': 'UI_FALLBACK'
             }
             
-            print(f"✅ PRIMARY DISCOVERY SUCCESS!")
+            print(f"✅ FALLBACK DISCOVERY SUCCESS!")
             print(f"   Slug: {slug}")
             print(f"   URL: {full_url}")
             print(f"   Asset: {asset.upper()}")
@@ -395,7 +759,7 @@ class GammaAPI:
             return result
             
         except Exception as e:
-            print(f"❌ PRIMARY DISCOVERY ERROR: {e}")
+            print(f"❌ FALLBACK DISCOVERY ERROR: {e}")
             traceback.print_exc()
             return None
     
@@ -408,8 +772,8 @@ class GammaAPI:
     ) -> Optional[Dict[str, Any]]:
         """Two-level discovery for 15m crypto markets.
         
-        LEVEL 1 (Primary): Try UI scraping from polymarket.com/crypto/15m (always gets LIVE market)
-        LEVEL 2 (Fallback): Try Gamma API with enhanced filtering (when UI unavailable)
+        LEVEL 1 (Primary): Official Gamma /events API with LIVE NOW filtering
+        LEVEL 2 (Fallback): UI scraping from polymarket.com/crypto/15m (when events API fails)
         
         Args:
             asset: Asset name ('BTC' or 'ETH')
@@ -424,36 +788,15 @@ class GammaAPI:
         print(f"🔍 TWO-LEVEL DISCOVERY FOR {asset.upper()} 15m MARKET")
         print("="*70)
         
-        # LEVEL 1: Try UI scraping first (Primary)
-        print("\n🌐 LEVEL 1: UI Discovery (Primary)")
+        # LEVEL 1: Try official /events API first (Primary)
+        print("\n🌐 LEVEL 1: Official Gamma /events API Discovery (Primary)")
         print("-" * 70)
         
-        if not page:
-            print("⚠️  No browser page provided for UI scraping")
-            print("   UI primary discovery unavailable - will use Gamma API fallback")
-        else:
-            event_info = self.discover_15m_event_via_ui(asset, page, base_url)
-            
-            if event_info:
-                print("\n✅ Discovery complete via UI (Primary)")
-                print("="*70 + "\n")
-                return event_info
+        event_info = self.discover_15m_event_via_events_api(slug_prefix)
         
-        # LEVEL 2: Fallback to Gamma API
-        print("\n🔄 LEVEL 2: Gamma API Discovery (Fallback)")
-        print("-" * 70)
-        print("⚠️  UI discovery did not succeed.")
-        print("   This can happen when:")
-        print("   - Browser not available")
-        print("   - Page layout changed")
-        print("   - Network issues loading polymarket.com")
-        print("\n   Attempting Gamma API fallback...")
-        
-        market = self.find_active_market(slug_prefix)
-        
-        if market:
-            # Success with Gamma API
-            slug = market.get('slug')
+        if event_info:
+            # Success with events API
+            slug = event_info.get('slug')
             full_url = self.get_market_url(slug, base_url)
             
             result = {
@@ -461,15 +804,39 @@ class GammaAPI:
                 'url': full_url,
                 'asset': asset.upper(),
                 'timestamp': self._extract_timestamp_from_slug(slug),
-                'source': 'GAMMA_FALLBACK',
-                'market_data': market
+                'source': 'EVENTS_PRIMARY',
+                'event_data': event_info
             }
             
-            print("\n✅ Discovery complete via Gamma API (Fallback)")
+            print("\n✅ Discovery complete via Official /events API (Primary)")
             print("="*70 + "\n")
             return result
         
+        # LEVEL 2: Fallback to UI scraping
+        print("\n🔄 LEVEL 2: UI Discovery (Fallback)")
+        print("-" * 70)
+        print("⚠️  Official /events API discovery did not succeed.")
+        print("   This can happen when:")
+        print("   - No LIVE NOW markets found (future markets scheduled but not started)")
+        print("   - API indexing delay for new rounds")
+        print("   - Network issues with Gamma API")
+        print("\n   Attempting UI scraping fallback...")
+        
+        if not page:
+            print("❌ No browser page provided for UI scraping")
+            print("   UI fallback unavailable - both discovery methods failed")
+            print("\n❌ DISCOVERY FAILED: Both /events API and UI scraping unavailable")
+            print("="*70 + "\n")
+            return None
+        
+        ui_event_info = self.discover_15m_event_via_ui(asset, page, base_url)
+        
+        if ui_event_info:
+            print("\n✅ Discovery complete via UI (Fallback)")
+            print("="*70 + "\n")
+            return ui_event_info
+        
         # Both methods failed
-        print("\n❌ DISCOVERY FAILED: Both UI and Gamma API failed")
+        print("\n❌ DISCOVERY FAILED: Both /events API and UI scraping failed")
         print("="*70 + "\n")
         return None
