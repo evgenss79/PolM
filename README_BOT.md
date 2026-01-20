@@ -404,6 +404,71 @@ The bot uses a **two-level discovery system**:
 ✅ FALLBACK DISCOVERY SUCCESS!
 ```
 
+### "Gamma returns future rounds" or "Selected wrong market time"
+
+**This happens when Gamma API returns markets scheduled for the future instead of markets that are LIVE now.**
+
+**The Fix (Implemented):**
+- Discovery now filters markets by time using `startDate/endDate` fields from the API
+- Only selects markets where `start <= now < end` (LIVE NOW)
+- Future markets are automatically filtered out
+- If no LIVE markets after filtering, falls back to UI scraping
+
+**What you'll see in logs:**
+```
+🔍 PRIMARY DISCOVERY: Searching Gamma API for prefix: btc-updown-15m-
+   📊 Gamma API returned 50 total markets
+   📊 Found 10 markets matching prefix 'btc-updown-15m-'
+   📊 After LIVE NOW filter: 1 markets (filtered out 9 future/past markets)
+✅ PRIMARY DISCOVERY SUCCESS!
+   Selected: LIVE market (start <= now < end)
+   Slug: btc-updown-15m-jan20-1430
+   Start: 2026-01-20 14:30:00 UTC
+   End: 2026-01-20 14:45:00 UTC
+   Reason: This market is LIVE NOW (among 1 live options)
+```
+
+**If all candidates are future markets:**
+```
+   📊 After LIVE NOW filter: 0 markets (filtered out 10 future/past markets)
+❌ PRIMARY DISCOVERY FAILED: No LIVE markets found (all 10 candidates are future or past markets)
+   This typically means:
+   - Future markets scheduled but not started yet
+   - API indexing delay for new rounds
+   Falling back to UI scraping...
+```
+
+The bot will automatically use the UI fallback (`/crypto/15m`) which always shows the current LIVE market.
+
+### "Page navigation timeout" or "Timeout waiting for networkidle"
+
+**This happens when navigating to Polymarket pages takes too long or never completes.**
+
+**The Issue:**
+- Polymarket pages have live websockets (for real-time price updates, activity feeds, etc.)
+- The `networkidle` wait condition waits for all network activity to stop
+- With active websockets, network is never idle, so the page never finishes loading
+- This causes navigation to timeout after 30 seconds
+
+**The Fix (Implemented):**
+- Navigation now uses `wait_until='domcontentloaded'` instead of `networkidle`
+- This waits only for the DOM to be ready, not for all network activity to stop
+- Timeout increased to 90 seconds for slower connections
+- Added 1.5 second stabilization wait after DOM loads
+- Optionally waits for key page elements (Up/Down buttons) to ensure page is interactive
+
+**What you'll see in logs:**
+```
+📍 Navigating to: https://polymarket.com/event/btc-updown-15m-jan20-1430
+✅ Page loaded (domcontentloaded)
+```
+
+**If you still experience timeouts:**
+1. **Check your internet connection** - Slow connections may need more time
+2. **Try again** - Polymarket servers may be slow or experiencing issues
+3. **Verify Polymarket is accessible** - Visit `https://polymarket.com` in your browser
+4. **Check firewall settings** - Ensure your firewall allows connections to Polymarket
+
 ### "Could not find UP/DOWN button"
 
 This means the page layout changed. Possible fixes:

@@ -6,6 +6,59 @@ Format: [YYYY-MM-DD] - Description of changes
 
 ---
 
+## [2026-01-20] - FIX: Page.goto timeout due to networkidle never triggering
+
+### Fixed
+- **Playwright navigation timeout on Polymarket pages**:
+  - **Issue**: `page.goto()` with `wait_until='networkidle'` times out because Polymarket has live websockets that prevent network idle state
+  - **Solution**: Changed to `wait_until='domcontentloaded'` which waits only for DOM to be ready
+  - **Timeout**: Increased from 30s to 90s for slower connections
+  - **Stability**: Added `page.wait_for_timeout(1500)` after navigation for page stabilization
+  - **Optional selector wait**: In `navigate_to_market()`, optionally waits for Up/Down buttons with 30s timeout
+  - **Files changed**:
+    - `src/ui_oneclick.py`: Updated `navigate_to_market()` method
+    - `src/gamma.py`: Updated `discover_15m_event_via_ui()` fallback discovery
+    - `CHANGELOG.md`: Documented this fix
+    - `README_BOT.md`: Updated troubleshooting section
+
+### Changed
+- Navigation now uses `domcontentloaded` instead of `networkidle` for reliable page loading
+- Logs now show "Page loaded (domcontentloaded)" instead of "Page loaded"
+- Timeout increased to 90 seconds for better reliability on slow connections
+
+---
+
+## [2026-01-20] - FIX: Discovery filters out future markets, selects only LIVE markets
+
+### Fixed
+- **Discovery now correctly filters future markets**:
+  - **Issue**: Gamma discovery was selecting future markets (e.g., "January 21...") instead of live "сейчас" (now) markets
+  - **Root Cause**: Discovery selected markets by ID (newest first) without checking if they were actually LIVE now vs scheduled for future
+  - **Solution**: Added time-based filtering using startDate/endDate fields from Gamma API payload
+  - **Filter Logic**: Only select markets where `start <= now < end`
+  - **Fallback**: If no LIVE markets found after filtering, automatically falls back to UI scraping from `/crypto/15m`
+  - **Logging**: Enhanced logging to show:
+    - Number of candidates before filtering
+    - Number after "LIVE NOW" filter
+    - Which market was selected and why (with start/end times)
+    - Clear explanation when future markets are filtered out
+  - **Files changed**:
+    - `src/gamma.py`: 
+      - Updated `find_active_market()` to filter by time after slug matching
+      - Added `_is_market_live()` to check if market is currently active
+      - Added `_parse_market_datetime()` to parse various datetime field formats
+      - Added `_format_market_time()` to display times in logs
+      - Supports multiple field patterns: startDate/endDate, startDate+startTime/endDate+endTime, startTimestamp/endTimestamp
+    - `CHANGELOG.md`: Documented this fix
+    - `README_BOT.md`: Added troubleshooting section about Gamma returning future rounds
+
+### Changed
+- Discovery now explicitly validates market timing instead of blindly trusting newest ID
+- Logging is more detailed to help users understand why certain markets are selected or rejected
+- Fallback to UI scraping is now triggered when all candidates are future/past markets
+
+---
+
 ## [2026-01-20] - FIX: Chromium crash on macOS 15 arm64
 
 ### Fixed
