@@ -84,7 +84,7 @@ class OneClickUI:
             # Optionally wait for a stable selector to ensure page is ready
             try:
                 # Wait for outcome buttons (Up/Down) to be visible
-                self.page.wait_for_selector('button:has-text("Up"), button:has-text("DOWN")', timeout=30000)
+                self.page.wait_for_selector('button:has-text("Up"), button:has-text("DOWN")', timeout=self.timeout)
             except Exception:
                 # If selector not found, continue anyway (page may have different layout)
                 pass
