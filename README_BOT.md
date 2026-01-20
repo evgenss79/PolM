@@ -404,6 +404,42 @@ The bot uses a **two-level discovery system**:
 ✅ FALLBACK DISCOVERY SUCCESS!
 ```
 
+### "Gamma returns future rounds" or "Selected wrong market time"
+
+**This happens when Gamma API returns markets scheduled for the future instead of markets that are LIVE now.**
+
+**The Fix (Implemented):**
+- Discovery now filters markets by time using `startDate/endDate` fields from the API
+- Only selects markets where `start <= now < end` (LIVE NOW)
+- Future markets are automatically filtered out
+- If no LIVE markets after filtering, falls back to UI scraping
+
+**What you'll see in logs:**
+```
+🔍 PRIMARY DISCOVERY: Searching Gamma API for prefix: btc-updown-15m-
+   📊 Gamma API returned 50 total markets
+   📊 Found 10 markets matching prefix 'btc-updown-15m-'
+   📊 After LIVE NOW filter: 1 markets (filtered out 9 future/past markets)
+✅ PRIMARY DISCOVERY SUCCESS!
+   Selected: LIVE market (start <= now < end)
+   Slug: btc-updown-15m-jan20-1430
+   Start: 2026-01-20 14:30:00 UTC
+   End: 2026-01-20 14:45:00 UTC
+   Reason: This market is LIVE NOW (among 1 live options)
+```
+
+**If all candidates are future markets:**
+```
+   📊 After LIVE NOW filter: 0 markets (filtered out 10 future/past markets)
+❌ PRIMARY DISCOVERY FAILED: No LIVE markets found (all 10 candidates are future or past markets)
+   This typically means:
+   - Future markets scheduled but not started yet
+   - API indexing delay for new rounds
+   Falling back to UI scraping...
+```
+
+The bot will automatically use the UI fallback (`/crypto/15m`) which always shows the current LIVE market.
+
 ### "Could not find UP/DOWN button"
 
 This means the page layout changed. Possible fixes:

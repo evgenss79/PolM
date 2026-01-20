@@ -24,6 +24,7 @@ class GammaAPI:
         """Find the most recent active market matching slug prefix (PRIMARY discovery).
         
         Uses enhanced Gamma API query with proper ordering to find fresh 15m events.
+        Filters out future markets by checking startDate/endDate to only select live markets.
         
         Args:
             slug_prefix: Market slug prefix (e.g., "btc-updown-15m-")
@@ -62,12 +63,31 @@ class GammaAPI:
                 print(f"❌ PRIMARY DISCOVERY FAILED: No active markets found for prefix: {slug_prefix}")
                 return None
             
+            # Filter by time: only keep markets that are LIVE NOW (start <= now < end)
+            now = datetime.utcnow()
+            live_markets = []
+            
+            for market in matching:
+                is_live = self._is_market_live(market, now)
+                if is_live:
+                    live_markets.append(market)
+            
+            print(f"   📊 After LIVE NOW filter: {len(live_markets)} markets (filtered out {len(matching) - len(live_markets)} future/past markets)")
+            
+            if not live_markets:
+                print(f"❌ PRIMARY DISCOVERY FAILED: No LIVE markets found (all {len(matching)} candidates are future or past markets)")
+                print(f"   This typically means:")
+                print(f"   - Future markets scheduled but not started yet")
+                print(f"   - API indexing delay for new rounds")
+                print(f"   Falling back to UI scraping...")
+                return None
+            
             # Sort by most recent (newest first) - double-check ordering
             # Markets have 'id' field which increases with time
-            matching.sort(key=lambda x: x.get('id', 0), reverse=True)
+            live_markets.sort(key=lambda x: x.get('id', 0), reverse=True)
             
-            # Get the most recent market
-            market = matching[0]
+            # Get the most recent LIVE market
+            market = live_markets[0]
             slug = market.get('slug')
             question = market.get('question', 'N/A')
             market_id = market.get('id', 'N/A')
@@ -75,12 +95,22 @@ class GammaAPI:
             # Extract timestamp from slug for validation
             timestamp_info = self._extract_timestamp_from_slug(slug)
             
+            # Log selection reasoning
+            start_time_str = self._format_market_time(market, 'start')
+            end_time_str = self._format_market_time(market, 'end')
+            
             print(f"✅ PRIMARY DISCOVERY SUCCESS!")
+            print(f"   Selected: LIVE market (start <= now < end)")
             print(f"   Slug: {slug}")
             print(f"   Question: {question}")
             print(f"   Market ID: {market_id}")
             if timestamp_info:
                 print(f"   Timestamp: {timestamp_info}")
+            if start_time_str:
+                print(f"   Start: {start_time_str}")
+            if end_time_str:
+                print(f"   End: {end_time_str}")
+            print(f"   Reason: This market is LIVE NOW (among {len(live_markets)} live options)")
             
             return market
             
@@ -144,6 +174,109 @@ class GammaAPI:
             return None
         except Exception:
             return None
+    
+    def _is_market_live(self, market: Dict[str, Any], now: datetime) -> bool:
+        """Check if a market is currently live (start <= now < end).
+        
+        Args:
+            market: Market dictionary from Gamma API
+            now: Current UTC datetime
+        
+        Returns:
+            True if market is live now, False otherwise
+        """
+        try:
+            # Parse start time from market data
+            # Fields can be: startDate, startTime, or combined timestamp fields
+            start_dt = self._parse_market_datetime(market, 'start')
+            end_dt = self._parse_market_datetime(market, 'end')
+            
+            # If we can't parse times, assume it's live (fail-open for backward compatibility)
+            if start_dt is None or end_dt is None:
+                return True
+            
+            # Check if market is live: start <= now < end
+            return start_dt <= now < end_dt
+            
+        except Exception as e:
+            # If parsing fails, assume market is live (fail-open)
+            print(f"   ⚠️  Could not parse market times, assuming live: {e}")
+            return True
+    
+    def _parse_market_datetime(self, market: Dict[str, Any], time_type: str) -> Optional[datetime]:
+        """Parse start or end datetime from market data.
+        
+        Args:
+            market: Market dictionary from Gamma API
+            time_type: 'start' or 'end'
+        
+        Returns:
+            Parsed datetime or None if not available
+        """
+        try:
+            # Try different field name patterns
+            # Pattern 1: startDate/endDate as ISO string
+            date_field = f"{time_type}Date"
+            if date_field in market and market[date_field]:
+                # ISO format: "2026-01-20T14:30:00Z" or timestamp
+                date_str = market[date_field]
+                if isinstance(date_str, str):
+                    # Try parsing ISO format
+                    try:
+                        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                    except:
+                        pass
+                    # Try parsing as Unix timestamp string
+                    try:
+                        return datetime.utcfromtimestamp(float(date_str))
+                    except:
+                        pass
+                elif isinstance(date_str, (int, float)):
+                    # Unix timestamp
+                    return datetime.utcfromtimestamp(date_str)
+            
+            # Pattern 2: Separate date and time fields (startDate + startTime)
+            date_field = f"{time_type}Date"
+            time_field = f"{time_type}Time"
+            if date_field in market and time_field in market:
+                date_val = market[date_field]
+                time_val = market[time_field]
+                if date_val and time_val:
+                    # Combine date and time strings
+                    datetime_str = f"{date_val} {time_val}"
+                    return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+            
+            # Pattern 3: Single timestamp field (e.g., "startTimestamp")
+            timestamp_field = f"{time_type}Timestamp"
+            if timestamp_field in market and market[timestamp_field]:
+                ts = market[timestamp_field]
+                if isinstance(ts, (int, float)):
+                    return datetime.utcfromtimestamp(ts)
+                elif isinstance(ts, str):
+                    try:
+                        return datetime.utcfromtimestamp(float(ts))
+                    except:
+                        pass
+            
+            return None
+            
+        except Exception as e:
+            return None
+    
+    def _format_market_time(self, market: Dict[str, Any], time_type: str) -> Optional[str]:
+        """Format start or end time for display.
+        
+        Args:
+            market: Market dictionary
+            time_type: 'start' or 'end'
+        
+        Returns:
+            Formatted time string or None
+        """
+        dt = self._parse_market_datetime(market, time_type)
+        if dt:
+            return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        return None
     
     def discover_15m_event_via_ui(
         self,

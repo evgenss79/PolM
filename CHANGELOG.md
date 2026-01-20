@@ -6,6 +6,37 @@ Format: [YYYY-MM-DD] - Description of changes
 
 ---
 
+## [2026-01-20] - FIX: Discovery filters out future markets, selects only LIVE markets
+
+### Fixed
+- **Discovery now correctly filters future markets**:
+  - **Issue**: Gamma discovery was selecting future markets (e.g., "January 21...") instead of live "сейчас" (now) markets
+  - **Root Cause**: Discovery selected markets by ID (newest first) without checking if they were actually LIVE now vs scheduled for future
+  - **Solution**: Added time-based filtering using startDate/endDate fields from Gamma API payload
+  - **Filter Logic**: Only select markets where `start <= now < end`
+  - **Fallback**: If no LIVE markets found after filtering, automatically falls back to UI scraping from `/crypto/15m`
+  - **Logging**: Enhanced logging to show:
+    - Number of candidates before filtering
+    - Number after "LIVE NOW" filter
+    - Which market was selected and why (with start/end times)
+    - Clear explanation when future markets are filtered out
+  - **Files changed**:
+    - `src/gamma.py`: 
+      - Updated `find_active_market()` to filter by time after slug matching
+      - Added `_is_market_live()` to check if market is currently active
+      - Added `_parse_market_datetime()` to parse various datetime field formats
+      - Added `_format_market_time()` to display times in logs
+      - Supports multiple field patterns: startDate/endDate, startDate+startTime/endDate+endTime, startTimestamp/endTimestamp
+    - `CHANGELOG.md`: Documented this fix
+    - `README_BOT.md`: Added troubleshooting section about Gamma returning future rounds
+
+### Changed
+- Discovery now explicitly validates market timing instead of blindly trusting newest ID
+- Logging is more detailed to help users understand why certain markets are selected or rejected
+- Fallback to UI scraping is now triggered when all candidates are future/past markets
+
+---
+
 ## [2026-01-20] - FIX: Chromium crash on macOS 15 arm64
 
 ### Fixed
